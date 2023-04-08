@@ -810,8 +810,38 @@ static int v4l2_set_parameters(AVFormatContext *ctx)
 
     streamparm.type = (s->multi_planer) ? V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE : V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (v4l2_ioctl(s->fd, VIDIOC_G_PARM, &streamparm) < 0) {
+        // for error cases, try to get frame rate from VIDIOC_G_DV_TIMINGS
+        struct v4l2_dv_timings timings;
         ret = AVERROR(errno);
-        av_log(ctx, AV_LOG_WARNING, "ioctl(VIDIOC_G_PARM): %s\n", av_err2str(ret));
+        if (v4l2_ioctl(s->fd, VIDIOC_G_DV_TIMINGS, &timings) == 0) {
+            const int total_width  = timings.bt.width  + timings.bt.hfrontporch + timings.bt.hsync + timings.bt.hbackporch;
+            const int total_height = timings.bt.height + timings.bt.vfrontporch + timings.bt.vsync + timings.bt.vbackporch;
+            int64_t framerate_den = 1001;
+            int64_t framerate_num = av_rescale(timings.bt.pixelclock, framerate_den, (int64_t)total_width * total_height);
+            framerate_num = ((framerate_num + 5) / 10) * 10; // round by 10
+            if (framerate_num % 1000 == 0) {
+                tpf->numerator   = framerate_den;
+                tpf->denominator = framerate_num;
+            } else {
+                int framerate_num_dst = 0, framerate_den_dst = 0;
+                framerate_den = 1000;
+                framerate_num = av_rescale(timings.bt.pixelclock, framerate_den, (int64_t)total_width * total_height);
+                framerate_num = ((framerate_num + 5) / 10) * 10; // round by 10
+                av_reduce(&framerate_num_dst, &framerate_den_dst, framerate_num, framerate_den, INT_MAX);
+                tpf->numerator   = framerate_den_dst;
+                tpf->denominator = framerate_num_dst;
+            }
+            av_log(ctx, AV_LOG_WARNING, "ioctl(VIDIOC_G_PARM): %s, estimated framerate %d/%d from dv timings.\n",
+                   av_err2str(ret), tpf->denominator, tpf->numerator);
+        } else if (framerate_q.num && framerate_q.den) {
+            // use user defined framerate for further error cases.
+            tpf->numerator   = framerate_q.num;
+            tpf->denominator = framerate_q.den;
+            av_log(ctx, AV_LOG_WARNING, "ioctl(VIDIOC_G_PARM): %s, using framerate %d/%d\n",
+                   av_err2str(ret), framerate_q.num, framerate_q.den);
+        } else {
+            av_log(ctx, AV_LOG_WARNING, "ioctl(VIDIOC_G_PARM): %s\n", av_err2str(ret));
+        }
     } else if (framerate_q.num && framerate_q.den) {
         if (streamparm.parm.capture.capability & V4L2_CAP_TIMEPERFRAME) {
             tpf = &streamparm.parm.capture.timeperframe;
