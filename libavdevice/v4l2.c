@@ -89,6 +89,7 @@ struct video_data {
     int top_field_first;
     int multi_planer;
     int ts_mode;
+    int ignore_input_error;
     TimeFilter *timefilter;
     int64_t last_time_m;
 
@@ -940,8 +941,10 @@ static int v4l2_read_header(AVFormatContext *ctx)
         av_log(ctx, AV_LOG_DEBUG, "Selecting input_channel: %d\n", s->channel);
         if (v4l2_ioctl(s->fd, VIDIOC_S_INPUT, &s->channel) < 0) {
             res = AVERROR(errno);
-            av_log(ctx, AV_LOG_ERROR, "ioctl(VIDIOC_S_INPUT): %s\n", av_err2str(res));
-            goto fail;
+            av_log(ctx, (s->ignore_input_error) ? AV_LOG_WARNING : AV_LOG_ERROR, "ioctl(VIDIOC_S_INPUT): %s\n", av_err2str(res));
+            if (!s->ignore_input_error) {
+                goto fail;
+            }
         }
     } else {
         /* get current video input */
@@ -1183,6 +1186,7 @@ static const AVOption options[] = {
     { "pixel_format", "set preferred pixel format",                               OFFSET(pixel_format), AV_OPT_TYPE_STRING, {.str = NULL},  0, 0,       DEC },
     { "input_format", "set preferred pixel format (for raw video) or codec name", OFFSET(pixel_format), AV_OPT_TYPE_STRING, {.str = NULL},  0, 0,       DEC },
     { "framerate",    "set frame rate",                                           OFFSET(framerate),    AV_OPT_TYPE_STRING, {.str = NULL},  0, 0,       DEC },
+    { "ignore_input_error", "ignore input error",                                 OFFSET(ignore_input_error), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1,      DEC },
 
     { "list_formats", "list available formats and exit",                          OFFSET(list_format),  AV_OPT_TYPE_INT,    {.i64 = 0 },  0, INT_MAX, DEC, .unit = "list_formats" },
     { "all",          "show all available formats",                               OFFSET(list_format),  AV_OPT_TYPE_CONST,  {.i64 = V4L_ALLFORMATS  },    0, INT_MAX, DEC, .unit = "list_formats" },
