@@ -988,9 +988,31 @@ static const AVCodec *find_codec_by_name(const char *name, int (*x)(const AVCode
 {
     void *i = 0;
     const AVCodec *p;
+    char *env = getenv("FFMPEG_RKMPP_DEC_V4L2M2M");
 
     if (!name)
         return NULL;
+
+    if (env != NULL){
+        if(strcmp(name, "av1_v4l2m2m") == 0)
+            name = "av1_rkmpp";
+        else if(strcmp(name, "h264_v4l2m2m") == 0)
+            name = "h264_rkmpp";
+        else if(strcmp(name, "h263_v4l2m2m") == 0)
+            name = "h263_rkmpp";
+        else if(strcmp(name, "hevc_v4l2m2m") == 0)
+            name = "hevc_rkmpp";
+        else if(strcmp(name, "vp8_v4l2m2m") == 0)
+            name = "vp8_rkmpp";
+        else if(strcmp(name, "vp9_v4l2m2m") == 0)
+            name = "vp9_rkmpp";
+        else if(strcmp(name, "mpeg1_v4l2m2m") == 0)
+            name = "mpeg1_rkmpp";
+        else if(strcmp(name, "mpeg2_v4l2m2m") == 0)
+            name = "mpeg2_rkmpp";
+        else if(strcmp(name, "mpeg4_v4l2m2m") == 0)
+            name = "mpeg4_rkmpp";
+    }
 
     while ((p = av_codec_iterate(&i))) {
         if (!x(p))
