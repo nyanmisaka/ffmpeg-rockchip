@@ -51,6 +51,7 @@ HEADERS = adler32.h                                                     \
           hwcontext_videotoolbox.h                                      \
           hwcontext_vdpau.h                                             \
           hwcontext_vulkan.h                                            \
+          hwcontext_rkmpp.h                                             \
           imgutils.h                                                    \
           intfloat.h                                                    \
           intreadwrite.h                                                \
@@ -200,6 +201,7 @@ OBJS-$(CONFIG_VAAPI)                    += hwcontext_vaapi.o
 OBJS-$(CONFIG_VIDEOTOOLBOX)             += hwcontext_videotoolbox.o
 OBJS-$(CONFIG_VDPAU)                    += hwcontext_vdpau.o
 OBJS-$(CONFIG_VULKAN)                   += hwcontext_vulkan.o vulkan.o
+OBJS-$(CONFIG_RKMPP)                    += hwcontext_rkmpp.o
 
 OBJS-$(!CONFIG_VULKAN)                  += hwcontext_stub.o
 
@@ -222,6 +224,7 @@ SKIPHEADERS-$(CONFIG_VDPAU)            += hwcontext_vdpau.h
 SKIPHEADERS-$(CONFIG_VULKAN)           += hwcontext_vulkan.h vulkan.h   \
                                           vulkan_functions.h            \
                                           vulkan_loader.h
+SKIPHEADERS-$(CONFIG_RKMPP)            += hwcontext_rkmpp.h
 
 TESTPROGS = adler32                                                     \
             aes                                                         \
