@@ -121,6 +121,7 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
 
     switch (avctx->pix_fmt) {
     case AV_PIX_FMT_YUV420P:
+    case AV_PIX_FMT_YUVJ420P:
         is_fmt_supported = 1;
         break;
     case AV_PIX_FMT_YUV420P10:
