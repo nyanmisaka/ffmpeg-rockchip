@@ -321,9 +321,9 @@ static int rkmpp_set_buffer_group(AVCodecContext *avctx,
         MppBufferInfo buf_info = {
             .index = i,
             .type  = MPP_BUFFER_TYPE_DRM,
-            .fd    = rkmpp_fc->frames[i].objects[0].fd,
-            .ptr   = rkmpp_fc->frames[i].objects[0].ptr,
-            .size  = rkmpp_fc->frames[i].objects[0].size,
+            .fd    = rkmpp_fc->frames[i].drm.objects[0].fd,
+            .ptr   = mpp_buffer_get_ptr(rkmpp_fc->frames[i].buffers[0]),
+            .size  = rkmpp_fc->frames[i].drm.objects[0].size,
         };
 
         if ((ret = mpp_buffer_commit(r->buf_group, &buf_info)) != MPP_OK) {
@@ -485,7 +485,6 @@ static int rkmpp_export_frame(AVCodecContext *avctx, AVFrame *frame, MppFrame mp
 
     desc->nb_objects = 1;
     desc->objects[0].fd   = mpp_buffer_get_fd(mpp_buf);
-    desc->objects[0].ptr  = mpp_buffer_get_ptr(mpp_buf);
     desc->objects[0].size = mpp_buffer_get_size(mpp_buf);
 
     mpp_fmt = mpp_frame_get_fmt(mpp_frame);

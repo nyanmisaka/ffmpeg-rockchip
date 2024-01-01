@@ -57,6 +57,22 @@
                 (DRM_FORMAT_MOD_VENDOR_ARM << 4)))
 
 /**
+* DRM Prime Frame descriptor for RKMPP HWDevice.
+*/
+typedef struct AVRKMPPDRMFrameDescriptor {
+    /**
+     * Backwards compatibility with AVDRMFrameDescriptor
+     */
+    AVDRMFrameDescriptor drm;
+
+    /**
+     * References to MppBuffer instances which are used
+     * on each drm frame index.
+     */
+    MppBuffer buffers[AV_DRM_MAX_PLANES];
+} AVRKMPPDRMFrameDescriptor;
+
+/**
  * RKMPP-specific data associated with a frame pool.
  *
  * Allocated as AVHWFramesContext.hwctx.
@@ -72,7 +88,7 @@ typedef struct AVRKMPPFramesContext {
      * Only valid if AVHWFramesContext.initial_pool_size was positive.
      * These are intended to be used as the buffer of RKMPP decoder.
      */
-    AVDRMFrameDescriptor *frames;
+    AVRKMPPDRMFrameDescriptor *frames;
     int                nb_frames;
 } AVRKMPPFramesContext;
 
