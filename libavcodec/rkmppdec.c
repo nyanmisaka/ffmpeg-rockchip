@@ -136,22 +136,29 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
         is_fmt_supported =
             avctx->codec_id == AV_CODEC_ID_H264;
         break;
+    // fallback to drm prime
+    case AV_PIX_FMT_NONE:
+        is_fmt_supported = 1;
+        avctx->pix_fmt = AV_PIX_FMT_DRM_PRIME;
+        break;
     default:
         is_fmt_supported = 0;
         break;
     }
 
-    if (!is_fmt_supported) {
-        av_log(avctx, AV_LOG_ERROR, "MPP doesn't support codec '%s' with pix_fmt '%s'\n",
-               avcodec_get_name(avctx->codec_id), av_get_pix_fmt_name(avctx->pix_fmt));
-        return AVERROR(ENOSYS);
-    }
+    if(avctx->pix_fmt != AV_PIX_FMT_DRM_PRIME){
+        if (!is_fmt_supported) {
+            av_log(avctx, AV_LOG_ERROR, "MPP doesn't support codec '%s' with pix_fmt '%s'\n",
+                   avcodec_get_name(avctx->codec_id), av_get_pix_fmt_name(avctx->pix_fmt));
+            return AVERROR(ENOSYS);
+        }
 
-    if ((ret = ff_get_format(avctx, pix_fmts)) < 0) {
-        av_log(avctx, AV_LOG_ERROR, "ff_get_format failed: %d\n", ret);
-        return ret;
+        if ((ret = ff_get_format(avctx, pix_fmts)) < 0) {
+            av_log(avctx, AV_LOG_ERROR, "ff_get_format failed: %d\n", ret);
+            return ret;
+        }
+        avctx->pix_fmt = ret;
     }
-    avctx->pix_fmt = ret;
 
     if ((coding_type = rkmpp_get_coding_type(avctx)) == MPP_VIDEO_CodingUnused) {
         av_log(avctx, AV_LOG_ERROR, "Unknown codec id: %d\n", avctx->codec_id);
@@ -644,10 +651,14 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
             av_log(avctx, AV_LOG_VERBOSE, "AFBC is requested but not supported\n");
 
         pix_fmts[1] = rkmpp_get_av_format(mpp_fmt & MPP_FRAME_FMT_MASK);
-        if ((ret = ff_get_format(avctx, pix_fmts)) < 0)
-            goto exit;
 
-        avctx->pix_fmt      = ret;
+        if(avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME)
+            avctx->sw_pix_fmt = pix_fmts[1];
+        else if ((ret = ff_get_format(avctx, pix_fmts)) < 0)
+            goto exit;
+        else
+            avctx->pix_fmt = ret;
+
         avctx->width        = mpp_frame_get_width(mpp_frame);
         avctx->height       = mpp_frame_get_height(mpp_frame);
         avctx->coded_width  = FFALIGN(avctx->width,  64);
