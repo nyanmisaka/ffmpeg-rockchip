@@ -124,37 +124,25 @@ static int rkmpp_frames_get_constraints(AVHWDeviceContext *hwdev,
     return 0;
 }
 
-static void rkmpp_free_drm_frame_descriptor(AVRKMPPDeviceContext *hwctx,
-                                            AVDRMFrameDescriptor *desc)
+static void rkmpp_free_drm_frame_descriptor(void *opaque, uint8_t *data)
 {
-    int i, ret;
+
+    MppBuffer mpp_buf = opaque;
+    AVRKMPPDRMFrameDescriptor *desc = (AVRKMPPDRMFrameDescriptor *)data;
+    int ret;
 
     if (!desc)
         return;
 
-    for (i = 0; i < desc->nb_objects; i++) {
-        AVDRMObjectDescriptor *object = &desc->objects[i];
-        MppBuffer mpp_buf = (MppBuffer)object->opaque;
-
-        if (mpp_buf) {
-            ret = mpp_buffer_put(mpp_buf);
-            if (ret != MPP_OK)
-                av_log(NULL, AV_LOG_WARNING,
-                       "Failed to put MPP buffer: %d\n", ret);
-        }
+    if (mpp_buf) {
+        ret = mpp_buffer_put(mpp_buf);
+        if (ret != MPP_OK)
+            av_log(NULL, AV_LOG_WARNING,
+                   "Failed to put MPP buffer: %d\n", ret);
     }
 
     memset(desc, 0, sizeof(*desc));
     av_free(desc);
-}
-
-static void rkmpp_buffer_free(void *opaque, uint8_t *data)
-{
-    AVHWFramesContext *hwfc = opaque;
-    AVRKMPPDeviceContext *hwctx = hwfc->device_ctx->hwctx;
-    AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)data;
-
-    rkmpp_free_drm_frame_descriptor(hwctx, desc);
 }
 
 static int rkmpp_get_aligned_linesize(enum AVPixelFormat pix_fmt, int width, int plane)
@@ -189,7 +177,7 @@ static AVBufferRef *rkmpp_drm_pool_alloc(void *opaque, size_t size)
     AVHWFramesContext *hwfc = opaque;
     AVRKMPPFramesContext *avfc = hwfc->hwctx;
     AVRKMPPDeviceContext *hwctx = hwfc->device_ctx->hwctx;
-    AVDRMFrameDescriptor *desc;
+    AVRKMPPDRMFrameDescriptor *desc;
     AVDRMLayerDescriptor *layer;
     AVBufferRef *ref;
 
@@ -210,8 +198,8 @@ static AVBufferRef *rkmpp_drm_pool_alloc(void *opaque, size_t size)
     if (!desc)
         return NULL;
 
-    desc->nb_objects = 1;
-    desc->nb_layers  = 1;
+    desc->drm_desc.nb_objects = 1;
+    desc->drm_desc.nb_layers  = 1;
 
     ret = mpp_buffer_get(avfc->buf_group, &mpp_buf, mpp_buf_size);
     if (ret != MPP_OK || !mpp_buf) {
@@ -219,13 +207,12 @@ static AVBufferRef *rkmpp_drm_pool_alloc(void *opaque, size_t size)
         ret = AVERROR(ENOMEM);
         goto fail;
     }
-    desc->objects[0].opaque = mpp_buf;
+    desc->buffers[0] = mpp_buf;
 
-    desc->objects[0].fd   = mpp_buffer_get_fd(mpp_buf);
-    desc->objects[0].ptr  = mpp_buffer_get_ptr(mpp_buf);
-    desc->objects[0].size = mpp_buffer_get_size(mpp_buf);
+    desc->drm_desc.objects[0].fd   = mpp_buffer_get_fd(mpp_buf);
+    desc->drm_desc.objects[0].size = mpp_buffer_get_size(mpp_buf);
 
-    layer = &desc->layers[0];
+    layer = &desc->drm_desc.layers[0];
     for (i = 0; i < FF_ARRAY_ELEMS(supported_formats); i++) {
         if (supported_formats[i].pixfmt == hwfc->sw_format) {
             layer->format = supported_formats[i].drm_format;
@@ -247,8 +234,8 @@ static AVBufferRef *rkmpp_drm_pool_alloc(void *opaque, size_t size)
             rkmpp_get_aligned_linesize(hwfc->sw_format, hwfc->width, i);
     }
 
-    ref = av_buffer_create((uint8_t*)desc, sizeof(*desc), rkmpp_buffer_free,
-                           opaque, 0);
+    ref = av_buffer_create((uint8_t*)desc, sizeof(*desc), rkmpp_free_drm_frame_descriptor,
+                           mpp_buf, 0);
     if (!ref) {
         av_log(hwfc, AV_LOG_ERROR, "Failed to create RKMPP buffer.\n");
         goto fail;
@@ -263,7 +250,7 @@ static AVBufferRef *rkmpp_drm_pool_alloc(void *opaque, size_t size)
     return ref;
 
 fail:
-    rkmpp_free_drm_frame_descriptor(hwctx, desc);
+    rkmpp_free_drm_frame_descriptor(mpp_buf, (uint8_t *)desc);
     return NULL;
 }
 
@@ -301,7 +288,7 @@ static int rkmpp_frames_init(AVHWFramesContext *hwfc)
     }
 
     hwfc->internal->pool_internal =
-        av_buffer_pool_init2(sizeof(AVDRMFrameDescriptor), hwfc,
+        av_buffer_pool_init2(sizeof(AVRKMPPDRMFrameDescriptor), hwfc,
                              rkmpp_drm_pool_alloc, NULL);
     if (!hwfc->internal->pool_internal) {
         av_log(hwfc, AV_LOG_ERROR, "Failed to create RKMPP buffer pool.\n");
@@ -371,7 +358,7 @@ static int rkmpp_map_frame(AVHWFramesContext *hwfc,
                            AVFrame *dst, const AVFrame *src, int flags)
 {
     AVRKMPPDeviceContext *hwctx = hwfc->device_ctx->hwctx;
-    const AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)src->data[0];
+    const AVRKMPPDRMFrameDescriptor *desc = (AVRKMPPDRMFrameDescriptor *)src->data[0];
 #if HAVE_LINUX_DMA_BUF_H
     struct dma_buf_sync sync_start = { 0 };
 #endif
@@ -398,44 +385,47 @@ static int rkmpp_map_frame(AVHWFramesContext *hwfc,
     sync_start.flags = DMA_BUF_SYNC_START | map->sync_flags;
 #endif
 
-    if (desc->objects[0].format_modifier != DRM_FORMAT_MOD_LINEAR) {
+    if (desc->drm_desc.objects[0].format_modifier != DRM_FORMAT_MOD_LINEAR) {
         av_log(hwfc, AV_LOG_ERROR, "Transfer non-linear DRM_PRIME frame is not supported!\n");
         return AVERROR(ENOSYS);
     }
 
-    av_assert0(desc->nb_objects <= AV_DRM_MAX_PLANES);
-    for (i = 0; i < desc->nb_objects; i++) {
-        if (desc->objects[i].ptr) {
-            addr = desc->objects[i].ptr;
+    av_assert0(desc->drm_desc.nb_objects <= AV_DRM_MAX_PLANES);
+    for (i = 0; i < desc->drm_desc.nb_objects; i++) {
+        addr = NULL;
+        if (desc->buffers[i])
+            addr = mpp_buffer_get_ptr(desc->buffers[i]);
+
+        if (addr) {
             map->unmap[i] = 0;
         } else {
-            addr = mmap(NULL, desc->objects[i].size, mmap_prot, MAP_SHARED,
-                        desc->objects[i].fd, 0);
+            addr = mmap(NULL, desc->drm_desc.objects[i].size, mmap_prot, MAP_SHARED,
+                        desc->drm_desc.objects[i].fd, 0);
             if (addr == MAP_FAILED) {
                 err = AVERROR(errno);
                 av_log(hwfc, AV_LOG_ERROR, "Failed to map RKMPP object %d to "
-                       "memory: %d.\n", desc->objects[i].fd, errno);
+                       "memory: %d.\n", desc->drm_desc.objects[i].fd, errno);
                 goto fail;
             }
             map->unmap[i] = 1;
         }
 
         map->address[i] = addr;
-        map->length[i]  = desc->objects[i].size;
-        map->object[i] = desc->objects[i].fd;
+        map->length[i]  = desc->drm_desc.objects[i].size;
+        map->object[i]  = desc->drm_desc.objects[i].fd;
 
 #if HAVE_LINUX_DMA_BUF_H
         /* We're not checking for errors here because the kernel may not
          * support the ioctl, in which case its okay to carry on */
         if (hwctx->flags & MPP_BUFFER_FLAGS_CACHABLE)
-            ioctl(desc->objects[i].fd, DMA_BUF_IOCTL_SYNC, &sync_start);
+            ioctl(desc->drm_desc.objects[i].fd, DMA_BUF_IOCTL_SYNC, &sync_start);
 #endif
     }
     map->nb_regions = i;
 
     plane = 0;
-    for (i = 0; i < desc->nb_layers; i++) {
-        const AVDRMLayerDescriptor *layer = &desc->layers[i];
+    for (i = 0; i < desc->drm_desc.nb_layers; i++) {
+        const AVDRMLayerDescriptor *layer = &desc->drm_desc.layers[i];
         for (p = 0; p < layer->nb_planes; p++) {
             dst->data[plane] =
                 (uint8_t*)map->address[layer->planes[p].object_index] +
@@ -457,7 +447,7 @@ static int rkmpp_map_frame(AVHWFramesContext *hwfc,
     return 0;
 
 fail:
-    for (i = 0; i < desc->nb_objects; i++) {
+    for (i = 0; i < desc->drm_desc.nb_objects; i++) {
         if (map->address[i] && map->unmap[i])
             munmap(map->address[i], map->length[i]);
     }
