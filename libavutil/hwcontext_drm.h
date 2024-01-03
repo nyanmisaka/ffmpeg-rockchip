@@ -51,12 +51,6 @@ typedef struct AVDRMObjectDescriptor {
      */
     int fd;
     /**
-     * DRM PRIME mapped virtual ptr for above fd.
-     *
-     * The content of this buffer must be readonly when acting decoder's out buffer.
-     */
-    void *ptr;
-    /**
      * Total size of the object.
      *
      * (This includes any parts not which do not contain image data.)
@@ -69,10 +63,6 @@ typedef struct AVDRMObjectDescriptor {
      * DRM_FORMAT_MOD_INVALID.
      */
     uint64_t format_modifier;
-    /**
-     * User opaque for the object.
-     */
-    void *opaque;
 } AVDRMObjectDescriptor;
 
 /**
