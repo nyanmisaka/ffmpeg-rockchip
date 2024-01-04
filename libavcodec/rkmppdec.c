@@ -118,6 +118,20 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
     enum AVPixelFormat pix_fmts[3] = { AV_PIX_FMT_DRM_PRIME,
                                        AV_PIX_FMT_NV12,
                                        AV_PIX_FMT_NONE };
+    char *env = getenv("FFMPEG_RKMPP_DEC_AFBC");
+
+    if (env != NULL){
+        if(!strcmp("rga", env))
+            r->afbc = 2;
+        else if(!strcmp("on", env))
+            r->afbc = 1;
+        else if(!strcmp("off", env))
+            r->afbc = 0;
+        else {
+            av_log(avctx, AV_LOG_ERROR, "Unknown FFMPEG_RKMPP_DEC_AFBC value, valid values are on/rga/off");
+            return AVERROR_EXTERNAL;
+        }
+    }
 
     switch (avctx->pix_fmt) {
     case AV_PIX_FMT_YUV420P:
