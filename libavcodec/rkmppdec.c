@@ -514,9 +514,8 @@ static int rkmpp_export_frame(AVCodecContext *avctx, AVFrame *frame, MppFrame mp
                     DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_SPARSE | AFBC_FORMAT_MOD_BLOCK_SIZE_16x16);
         layer->format = rkmpp_get_drm_afbc_format(mpp_fmt);
         layer->nb_planes = 1;
-        // no idea why 1/4, found by testing, should be an mpp bug
-        layer->planes[0].pitch = mpp_frame_get_hor_stride(mpp_frame) >> 2;
-        layer->planes[0].offset = mpp_frame_get_offset_y(mpp_frame) * layer->planes[0].pitch;
+        layer->planes[0].pitch = mpp_frame_get_hor_stride(mpp_frame) * 3 / 2;
+        layer->planes[0].offset = 0;
     } else {
         layer->format = rkmpp_get_drm_format(mpp_fmt);
         layer->nb_planes = 2;
