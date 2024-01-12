@@ -787,6 +787,7 @@ static int rkmpp_decode_receive_frame(AVCodecContext *avctx, AVFrame *frame)
     AVCodecInternal *avci = avctx->internal;
     RKMPPDecContext *r = avctx->priv_data;
     AVPacket *pkt = &r->last_pkt;
+    int retry_cnt = 0;
     int ret_send, ret_get;
 
     if (r->info_change && !r->buf_group)
@@ -828,6 +829,13 @@ get_frame:
     ret_get = rkmpp_get_frame(avctx, frame, 100);
     if (ret_get == AVERROR_EOF)
         av_log(avctx, AV_LOG_DEBUG, "Decoder is at EOF\n");
+    /* EAGAIN should never happen during draining */
+    else if (avci->draining && ret_get == AVERROR(EAGAIN)) {
+        if (retry_cnt++ < MAX_RETRY_COUNT)
+            goto get_frame;
+        else
+            ret_get = AVERROR_BUG;
+    }
     /* this is not likely but lets handle it in case synchronization issues of MPP */
     else if (ret_get == AVERROR(EAGAIN) && ret_send == AVERROR(EAGAIN))
         goto send_pkt;
