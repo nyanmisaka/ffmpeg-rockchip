@@ -169,6 +169,7 @@ static const AVOption hevc_options[] = {
 };
 
 static const enum AVPixelFormat rkmpp_enc_pix_fmts[] = {
+    AV_PIX_FMT_GRAY8,
     AV_PIX_FMT_YUV420P,
     AV_PIX_FMT_YUV422P,
     AV_PIX_FMT_YUV444P,
