@@ -40,7 +40,8 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 
-#define MAX_ERRINFO_COUNT 1000
+#define MAX_ERRINFO_COUNT 100
+#define MAX_RETRY_COUNT   100
 
 typedef struct RKMPPDecContext {
     AVClass       *class;
