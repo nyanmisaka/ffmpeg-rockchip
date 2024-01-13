@@ -442,7 +442,7 @@ static void rkmpp_free_mpp_frame(void *opaque, uint8_t *data)
 
 static void rkmpp_free_drm_desc(void *opaque, uint8_t *data)
 {
-    AVDRMFrameDescriptor *drm_desc = (AVDRMFrameDescriptor *)opaque;
+    AVRKMPPDRMFrameDescriptor *drm_desc = (AVRKMPPDRMFrameDescriptor *)opaque;
     av_free(drm_desc);
 }
 
@@ -465,7 +465,7 @@ static int frame_create_buf(AVFrame *frame,
 static int rkmpp_export_frame(AVCodecContext *avctx, AVFrame *frame, MppFrame mpp_frame)
 {
     RKMPPDecContext *r = avctx->priv_data;
-    AVDRMFrameDescriptor *desc = NULL;
+    AVRKMPPDRMFrameDescriptor *desc = NULL;
     AVDRMLayerDescriptor *layer = NULL;
     MppBuffer mpp_buf = NULL;
     MppFrameFormat mpp_fmt = MPP_FMT_BUTT;
@@ -483,19 +483,21 @@ static int rkmpp_export_frame(AVCodecContext *avctx, AVFrame *frame, MppFrame mp
     if (!desc)
         return AVERROR(ENOMEM);
 
-    desc->nb_objects = 1;
-    desc->objects[0].fd   = mpp_buffer_get_fd(mpp_buf);
-    desc->objects[0].size = mpp_buffer_get_size(mpp_buf);
+    desc->drm_desc.nb_objects = 1;
+    desc->buffers[0] = mpp_buf;
+
+    desc->drm_desc.objects[0].fd   = mpp_buffer_get_fd(mpp_buf);
+    desc->drm_desc.objects[0].size = mpp_buffer_get_size(mpp_buf);
 
     mpp_fmt = mpp_frame_get_fmt(mpp_frame);
     is_afbc = mpp_fmt & MPP_FRAME_FBC_MASK;
 
     if (is_afbc)
-        desc->objects[0].format_modifier =
+        desc->drm_desc.objects[0].format_modifier =
             DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_SPARSE | AFBC_FORMAT_MOD_BLOCK_SIZE_16x16);
 
-    desc->nb_layers = 1;
-    layer = &desc->layers[0];
+    desc->drm_desc.nb_layers = 1;
+    layer = &desc->drm_desc.layers[0];
     layer->format = is_afbc ? rkmpp_get_drm_afbc_format(mpp_fmt)
                             : rkmpp_get_drm_format(mpp_fmt);
 
