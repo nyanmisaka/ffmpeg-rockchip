@@ -906,20 +906,22 @@ static int rkmpp_encode_init(AVCodecContext *avctx)
 
     if (avctx->hw_frames_ctx || avctx->hw_device_ctx) {
         AVBufferRef *device_ref = avctx->hw_device_ctx;
+        AVHWDeviceContext *device_ctx = NULL;
         AVHWFramesContext *hwfc = NULL;
 
         if (avctx->hw_frames_ctx) {
             hwfc = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
             device_ref = hwfc->device_ref;
         }
+        device_ctx = (AVHWDeviceContext *)device_ref->data;
 
-        r->hwdevice = av_buffer_ref(device_ref);
-        if (!r->hwdevice) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
+        if (device_ctx && device_ctx->type == AV_HWDEVICE_TYPE_RKMPP) {
+            r->hwdevice = av_buffer_ref(device_ref);
+            if (r->hwdevice)
+                av_log(avctx, AV_LOG_VERBOSE, "Picked up an existing RKMPP hardware device\n");
         }
-        av_log(avctx, AV_LOG_VERBOSE, "Picked up an existing RKMPP hardware device\n");
-    } else {
+    }
+    if (!r->hwdevice) {
         if ((ret = av_hwdevice_ctx_create(&r->hwdevice,
                                           AV_HWDEVICE_TYPE_RKMPP,
                                           NULL, NULL, 0)) < 0) {
