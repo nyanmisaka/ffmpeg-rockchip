@@ -115,6 +115,7 @@ static const AVCodecHWConfigInternal *const rkmpp_dec_hw_configs[] = {
         .public = {
             .pix_fmt     = AV_PIX_FMT_DRM_PRIME,
             .methods     = AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX |
+                           AV_CODEC_HW_CONFIG_METHOD_HW_FRAMES_CTX |
                            AV_CODEC_HW_CONFIG_METHOD_INTERNAL,
             .device_type = AV_HWDEVICE_TYPE_RKMPP,
         },
