@@ -118,6 +118,10 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
     enum AVPixelFormat pix_fmts[3] = { AV_PIX_FMT_DRM_PRIME,
                                        AV_PIX_FMT_NV12,
                                        AV_PIX_FMT_NONE };
+    char *env = getenv("FFMPEG_RKMPP_DEC_OPT");
+
+    if (env != NULL && av_set_options_string(r, env, "=", " ") <= 0)
+        return AVERROR_OPTION_NOT_FOUND;
 
     switch (avctx->pix_fmt) {
     case AV_PIX_FMT_YUV420P:
@@ -638,6 +642,7 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
     }
 
     if (r->info_change = mpp_frame_get_info_change(mpp_frame)) {
+        char *opts;
         int fast_parse = r->fast_parse;
         int mpp_frame_mode = mpp_frame_get_mode(mpp_frame);
         const MppFrameFormat mpp_fmt = mpp_frame_get_fmt(mpp_frame);
@@ -647,8 +652,10 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
 
         av_log(avctx, AV_LOG_VERBOSE, "Noticed an info change\n");
 
-        if (r->afbc && !(mpp_fmt & MPP_FRAME_FBC_MASK))
+        if (r->afbc && !(mpp_fmt & MPP_FRAME_FBC_MASK)){
             av_log(avctx, AV_LOG_VERBOSE, "AFBC is requested but not supported\n");
+            r->afbc = 0;
+        }
 
         pix_fmts[1] = rkmpp_get_av_format(mpp_fmt & MPP_FRAME_FMT_MASK);
 
@@ -666,10 +673,14 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
         avctx->coded_height = FFALIGN(avctx->height, 64);
         rkmpp_export_avctx_color_props(avctx, mpp_frame);
 
-        av_log(avctx, AV_LOG_VERBOSE, "Configured with size: %dx%d | pix_fmt: %s | sw_pix_fmt: %s\n",
+        if(av_opt_serialize(r, 0, 0, &opts, '=', ' '))
+            strcpy(opts, "Parse Error");
+
+        av_log(avctx, AV_LOG_VERBOSE, "Configured with size: %dx%d | pix_fmt: %s | sw_pix_fmt: %s | options: %s\n",
                avctx->width, avctx->height,
                av_get_pix_fmt_name(avctx->pix_fmt),
-               av_get_pix_fmt_name(avctx->sw_pix_fmt));
+               av_get_pix_fmt_name(avctx->sw_pix_fmt),
+               opts);
 
         if ((ret = rkmpp_set_buffer_group(avctx, pix_fmts[1], avctx->width, avctx->height)) < 0)
             goto exit;
