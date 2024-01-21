@@ -29,6 +29,9 @@
 #ifndef DRM_FORMAT_P010
 #define DRM_FORMAT_P010         fourcc_code('P', '0', '1', '0')
 #endif
+#ifndef DRM_FORMAT_P210
+#define DRM_FORMAT_P210         fourcc_code('P', '2', '1', '0')
+#endif
 #ifndef DRM_FORMAT_NV15
 #define DRM_FORMAT_NV15         fourcc_code('N', 'V', '1', '5')
 #endif
