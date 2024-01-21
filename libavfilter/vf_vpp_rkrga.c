@@ -41,6 +41,7 @@ typedef struct RGAVppContext {
     RKRGAContext rga;
 
     enum AVPixelFormat format;
+    char *formatmap;
     int transpose;
     int force_original_aspect_ratio;
     int force_divisible_by;
@@ -261,6 +262,55 @@ static av_cold int set_size_info(AVFilterContext *ctx,
     return 0;
 }
 
+static av_cold int get_output_format(AVFilterContext *ctx, enum AVPixelFormat in_format,
+                                     enum AVPixelFormat *out_format) {
+    RGAVppContext *r = ctx->priv;
+    AVDictionary *formats = NULL;
+    const AVDictionaryEntry *entry = NULL;
+    int ret;
+
+    ret = av_dict_parse_string(&formats, r->formatmap, "-", "+", 0);
+    if (ret < 0) {
+        av_dict_free(&formats);
+        av_log(ctx, AV_LOG_ERROR, "Improper syntax %s for formatmap.Use fmt1-fmt2+fmt3-fmt4.\n", r->formatmap);
+        goto clean;
+    }
+
+    // sanitize key=value formats
+    while ((entry = av_dict_iterate(formats, entry))) {
+        if (av_get_pix_fmt(entry->key) == AV_PIX_FMT_NONE) {
+            av_log(ctx, AV_LOG_ERROR, "Unknown pixel format %s.\n", entry->key);
+            goto clean;
+        }
+        if (av_get_pix_fmt(entry->value) == AV_PIX_FMT_NONE) {
+            av_log(ctx, AV_LOG_ERROR, "Unknown pixel format %s.\n", entry->value);
+            goto clean;
+        }
+    }
+
+    // search for the first match
+    entry = NULL;
+    while ((entry = av_dict_iterate(formats, entry))) {
+        enum AVPixelFormat kformat = av_get_pix_fmt(entry->key);
+        enum AVPixelFormat vformat = av_get_pix_fmt(entry->value);
+
+        if (in_format == kformat) {
+            if (r->format != kformat)
+                av_log(ctx, AV_LOG_VERBOSE, "Overriding requested %s format with mapped format %s.\n",
+                        av_get_pix_fmt_name(r->format), av_get_pix_fmt_name(vformat));
+            r->format = vformat;
+            break;
+        }
+    }
+
+    *out_format = (r->format == AV_PIX_FMT_NONE) ? in_format : r->format;
+    av_dict_free(&formats);
+    return 0;
+    clean:
+    av_dict_free(&formats);
+    return AVERROR_OPTION_NOT_FOUND;
+}
+
 static av_cold int rgavpp_config_props(AVFilterLink *outlink)
 {
     AVFilterContext *ctx = outlink->src;
@@ -278,7 +328,8 @@ static av_cold int rgavpp_config_props(AVFilterLink *outlink)
     }
     in_frames_ctx = (AVHWFramesContext *)inlink->hw_frames_ctx->data;
     in_format     = in_frames_ctx->sw_format;
-    out_format    = (r->format == AV_PIX_FMT_NONE) ? in_format : r->format;
+    if(get_output_format(ctx, in_format, &out_format))
+        return AVERROR_OPTION_NOT_FOUND;
 
     ret = set_size_info(ctx, inlink, outlink);
     if (ret < 0)
@@ -377,7 +428,10 @@ static av_cold void rgavpp_uninit(AVFilterContext *ctx)
         { "rga3_core1", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 2 }, 0, 0, FLAGS, "core" }, /* RGA3_SCHEDULER_CORE1 */ \
         { "rga2_core0", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 4 }, 0, 0, FLAGS, "core" }, /* RGA2_SCHEDULER_CORE0 */ \
     { "async_depth", "Set the internal parallelization depth", OFFSET(rga.async_depth), AV_OPT_TYPE_INT, { .i64 = 2 }, 0, 4, .flags = FLAGS }, \
-    { "afbc", "Enable AFBC (Arm Frame Buffer Compression) to save bandwidth", OFFSET(rga.afbc_out), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, .flags = FLAGS },
+    { "afbc", "Enable AFBC (Arm Frame Buffer Compression) to save bandwidth", OFFSET(rga.afbc_out), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, .flags = FLAGS }, \
+    { "format", "Output video pixel format", OFFSET(format), AV_OPT_TYPE_PIXEL_FMT, { .i64 = AV_PIX_FMT_NONE }, INT_MIN, INT_MAX, .flags = FLAGS }, \
+    { "formatmap", "Set output format map according to the input format given using a + seperated list of key-value pairs, ie: fmt1-fmt2+fm3-fmt4", \
+        OFFSET(formatmap), AV_OPT_TYPE_STRING, { .str  = "" }, 0, 0, .flags = FLAGS }, \
 
 static const AVFilterPad rgavpp_inputs[] = {
     {
@@ -399,7 +453,6 @@ static const AVFilterPad rgavpp_outputs[] = {
 static const AVOption rgascale_options[] = {
     { "w",  "Output video width",  OFFSET(ow), AV_OPT_TYPE_STRING, { .str = "iw" }, 0, 0, FLAGS },
     { "h",  "Output video height", OFFSET(oh), AV_OPT_TYPE_STRING, { .str = "ih" }, 0, 0, FLAGS },
-    { "format", "Output video pixel format", OFFSET(format), AV_OPT_TYPE_PIXEL_FMT, { .i64 = AV_PIX_FMT_NONE }, INT_MIN, INT_MAX, .flags = FLAGS },
     { "force_original_aspect_ratio", "Decrease or increase w/h if necessary to keep the original AR", OFFSET(force_original_aspect_ratio), AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 2, FLAGS, "force_oar" }, \
         { "disable",  NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, FLAGS, "force_oar" }, \
         { "decrease", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, FLAGS, "force_oar" }, \
@@ -445,7 +498,6 @@ static const AVOption rgavpp_options[] = {
     { "ch", "Set the height crop area expression", OFFSET(ch), AV_OPT_TYPE_STRING, { .str = "ih" }, 0, 0, FLAGS },
     { "cx", "Set the x crop area expression",      OFFSET(cx), AV_OPT_TYPE_STRING, { .str = "(in_w-out_w)/2" }, 0, 0, FLAGS },
     { "cy", "Set the y crop area expression",      OFFSET(cy), AV_OPT_TYPE_STRING, { .str = "(in_h-out_h)/2" }, 0, 0, FLAGS },
-    { "format", "Output video pixel format", OFFSET(format), AV_OPT_TYPE_PIXEL_FMT, { .i64 = AV_PIX_FMT_NONE }, INT_MIN, INT_MAX, .flags = FLAGS },
     { "transpose", "Set transpose direction", OFFSET(transpose), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 6, FLAGS, "transpose" },
         { "cclock_hflip", "Rotate counter-clockwise with horizontal flip", 0, AV_OPT_TYPE_CONST, { .i64 = TRANSPOSE_CCLOCK_FLIP }, 0, 0, FLAGS, "transpose" },
         { "clock",        "Rotate clockwise",                              0, AV_OPT_TYPE_CONST, { .i64 = TRANSPOSE_CLOCK       }, 0, 0, FLAGS, "transpose" },
