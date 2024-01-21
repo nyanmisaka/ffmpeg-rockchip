@@ -50,8 +50,9 @@ typedef struct RGAFormatMap {
     { AV_PIX_FMT_NV21,     RK_FORMAT_YCrCb_420_SP }, \
     { AV_PIX_FMT_NV16,     RK_FORMAT_YCbCr_422_SP }, \
     { AV_PIX_FMT_P010,     RK_FORMAT_YCbCr_420_SP_10B }, /* RGA3 only */ \
+    { AV_PIX_FMT_P210,     RK_FORMAT_YCbCr_422_SP_10B }, /* RGA3 only */ \
     { AV_PIX_FMT_NV15,     RK_FORMAT_YCbCr_420_SP_10B }, /* RGA2 only input, aka P010 compact */ \
-    { AV_PIX_FMT_NV20,     RK_FORMAT_YCbCr_422_SP_10B }, \
+    { AV_PIX_FMT_NV20,     RK_FORMAT_YCbCr_422_SP_10B }, /* RGA2 only input, aka P210 compact */ \
     { AV_PIX_FMT_YUYV422,  RK_FORMAT_YUYV_422 }, \
     { AV_PIX_FMT_YVYU422,  RK_FORMAT_YVYU_422 }, \
     { AV_PIX_FMT_UYVY422,  RK_FORMAT_UYVY_422 },
@@ -312,6 +313,13 @@ static int verify_rga_frame_info_io_dynamic(AVFilterContext *avctx,
          out->pix_fmt == AV_PIX_FMT_P010)) {
         av_log(avctx, AV_LOG_ERROR, "'%s' is not supported if RGA2 is requested\n",
                av_get_pix_fmt_name(AV_PIX_FMT_P010));
+        return AVERROR(ENOSYS);
+    }
+    if (r->is_rga2_used &&
+        (in->pix_fmt == AV_PIX_FMT_P210 ||
+         out->pix_fmt == AV_PIX_FMT_P210)) {
+        av_log(avctx, AV_LOG_ERROR, "'%s' is not supported if RGA2 is requested\n",
+               av_get_pix_fmt_name(AV_PIX_FMT_P210));
         return AVERROR(ENOSYS);
     }
     if (r->is_rga2_used &&
@@ -689,6 +697,14 @@ static av_cold int verify_rga_frame_info(AVFilterContext *avctx,
                av_get_pix_fmt_name(AV_PIX_FMT_P010));
         return AVERROR(ENOSYS);
     }
+    /* P210 requires RGA3 */
+    if (!r->has_rga3 &&
+        (src->pix_fmt == AV_PIX_FMT_P210 ||
+         dst->pix_fmt == AV_PIX_FMT_P210)) {
+        av_log(avctx, AV_LOG_ERROR, "'%s' is only supported by RGA3\n",
+               av_get_pix_fmt_name(AV_PIX_FMT_P210));
+        return AVERROR(ENOSYS);
+    }
     /* Input formats that requires RGA2 */
     if (!r->has_rga2 &&
         (src->pix_fmt == AV_PIX_FMT_GRAY8 ||
@@ -715,29 +731,31 @@ static av_cold int verify_rga_frame_info(AVFilterContext *avctx,
                av_get_pix_fmt_name(dst->pix_fmt));
         return AVERROR(ENOSYS);
     }
-    /* P010 requires RGA3 but it can't handle certain formats */
-    if (src->pix_fmt == AV_PIX_FMT_P010 &&
-        (dst->pix_fmt == AV_PIX_FMT_GRAY8 ||
-         dst->pix_fmt == AV_PIX_FMT_YUV420P ||
-         dst->pix_fmt == AV_PIX_FMT_YUV422P ||
-         dst->pix_fmt == AV_PIX_FMT_RGB555LE ||
-         dst->pix_fmt == AV_PIX_FMT_BGR555LE ||
-         dst->pix_fmt == AV_PIX_FMT_ARGB ||
-         dst->pix_fmt == AV_PIX_FMT_0RGB ||
-         dst->pix_fmt == AV_PIX_FMT_ABGR ||
-         dst->pix_fmt == AV_PIX_FMT_0BGR)) {
+    /* P010/P210 requires RGA3 but it can't handle certain formats */
+    if ((src->pix_fmt == AV_PIX_FMT_P010 ||
+         src->pix_fmt == AV_PIX_FMT_P210) &&
+         (dst->pix_fmt == AV_PIX_FMT_GRAY8 ||
+          dst->pix_fmt == AV_PIX_FMT_YUV420P ||
+          dst->pix_fmt == AV_PIX_FMT_YUV422P ||
+          dst->pix_fmt == AV_PIX_FMT_RGB555LE ||
+          dst->pix_fmt == AV_PIX_FMT_BGR555LE ||
+          dst->pix_fmt == AV_PIX_FMT_ARGB ||
+          dst->pix_fmt == AV_PIX_FMT_0RGB ||
+          dst->pix_fmt == AV_PIX_FMT_ABGR ||
+          dst->pix_fmt == AV_PIX_FMT_0BGR)) {
         av_log(avctx, AV_LOG_ERROR, "'%s' to '%s' is not supported\n",
                av_get_pix_fmt_name(src->pix_fmt),
                av_get_pix_fmt_name(dst->pix_fmt));
         return AVERROR(ENOSYS);
     }
     /* RGA3 only format to RGA2 only format is not supported */
-    if (dst->pix_fmt == AV_PIX_FMT_P010 &&
-        (src->pix_fmt == AV_PIX_FMT_GRAY8 ||
-         src->pix_fmt == AV_PIX_FMT_YUV420P ||
-         src->pix_fmt == AV_PIX_FMT_YUV422P ||
-         src->pix_fmt == AV_PIX_FMT_RGB555LE ||
-         src->pix_fmt == AV_PIX_FMT_BGR555LE)) {
+    if ((dst->pix_fmt == AV_PIX_FMT_P010 ||
+         dst->pix_fmt == AV_PIX_FMT_P210) &&
+         (src->pix_fmt == AV_PIX_FMT_GRAY8 ||
+          src->pix_fmt == AV_PIX_FMT_YUV420P ||
+          src->pix_fmt == AV_PIX_FMT_YUV422P ||
+          src->pix_fmt == AV_PIX_FMT_RGB555LE ||
+          src->pix_fmt == AV_PIX_FMT_BGR555LE)) {
         av_log(avctx, AV_LOG_ERROR, "'%s' to '%s' is not supported\n",
                av_get_pix_fmt_name(src->pix_fmt),
                av_get_pix_fmt_name(dst->pix_fmt));
@@ -849,7 +867,8 @@ static av_cold int fill_rga_frame_info_by_link(AVFilterContext *avctx,
         info->act_h = ALIGN_DOWN(info->act_h, RK_RGA_YUV_ALIGN);
     }
 
-    info->uncompact_10b_msb = info->pix_fmt == AV_PIX_FMT_P010;
+    info->uncompact_10b_msb = info->pix_fmt == AV_PIX_FMT_P010 ||
+                              info->pix_fmt == AV_PIX_FMT_P210;
 
     if (link->w * link->h > (3840 * 2160 * 3))
         r->async_depth = FFMIN(r->async_depth, 1);
