@@ -54,6 +54,7 @@ static const struct {
     { AV_PIX_FMT_NV24,     DRM_FORMAT_NV24,     },
     /* semi-planar YUV 10-bit */
     { AV_PIX_FMT_P010,     DRM_FORMAT_P010,     },
+    { AV_PIX_FMT_P210,     DRM_FORMAT_P210,     },
     { AV_PIX_FMT_NV15,     DRM_FORMAT_NV15,     },
     { AV_PIX_FMT_NV20,     DRM_FORMAT_NV20,     },
     /* packed YUV */
