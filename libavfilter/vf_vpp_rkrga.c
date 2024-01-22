@@ -44,6 +44,8 @@ typedef struct RGAVppContext {
     int transpose;
     int force_original_aspect_ratio;
     int force_divisible_by;
+    int force_yuv;
+    int force_chroma;
     int scheduler_core;
 
     int in_rotate_mode;
@@ -55,6 +57,22 @@ typedef struct RGAVppContext {
     int act_x, act_y;
     int act_w, act_h;
 } RGAVppContext;
+
+enum {
+    FORCE_YUV_DISABLE,
+    FORCE_YUV_8BIT,
+    FORCE_YUV_10BIT,
+    FORCE_YUV_NB
+};
+
+enum {
+    FORCE_CHROMA_AUTO,
+    FORCE_CHROMA_420SP,
+    FORCE_CHROMA_420P,
+    FORCE_CHROMA_422SP,
+    FORCE_CHROMA_422P,
+    FORCE_CHROMA_NB
+};
 
 static const char *const var_names[] = {
     "iw", "in_w",
@@ -261,6 +279,54 @@ static av_cold int set_size_info(AVFilterContext *ctx,
     return 0;
 }
 
+static av_cold void config_force_format(AVFilterContext *ctx,
+                                        enum AVPixelFormat in_format,
+                                        enum AVPixelFormat *out_format)
+{
+    RGAVppContext *r = ctx->priv;
+    const AVPixFmtDescriptor *desc;
+    int out_depth, force_chroma;
+    int is_yuv, is_fully_planar;
+
+    if (!out_format)
+        return;
+
+    out_depth = (r->force_yuv == FORCE_YUV_8BIT) ? 8 :
+                (r->force_yuv == FORCE_YUV_10BIT) ? 10 : 0;
+    if (!out_depth)
+        return;
+
+    desc = av_pix_fmt_desc_get(in_format);
+    is_yuv = !(desc->flags & AV_PIX_FMT_FLAG_RGB) && desc->nb_components >= 2;
+
+    force_chroma = r->force_chroma;
+    if (is_yuv && force_chroma == FORCE_CHROMA_AUTO) {
+        is_fully_planar = (desc->flags & AV_PIX_FMT_FLAG_PLANAR) &&
+                           desc->comp[1].plane != desc->comp[2].plane;
+        if (desc->log2_chroma_w == 1 && desc->log2_chroma_h == 1)
+            force_chroma = is_fully_planar ? FORCE_CHROMA_420P : FORCE_CHROMA_420SP;
+        else if (desc->log2_chroma_w == 1 && !desc->log2_chroma_h)
+            force_chroma = is_fully_planar ? FORCE_CHROMA_422P : FORCE_CHROMA_422SP;
+    }
+
+    switch (force_chroma) {
+    case FORCE_CHROMA_422P:
+        *out_format = AV_PIX_FMT_YUV422P;
+        break;
+    case FORCE_CHROMA_422SP:
+        *out_format = out_depth == 10 ?
+            AV_PIX_FMT_P210 : AV_PIX_FMT_NV16;
+        break;
+    case FORCE_CHROMA_420P:
+        *out_format = AV_PIX_FMT_YUV420P;
+        break;
+    case FORCE_CHROMA_420SP:
+    default:
+        *out_format = out_depth == 10 ?
+            AV_PIX_FMT_P010 : AV_PIX_FMT_NV12;
+    }
+}
+
 static av_cold int rgavpp_config_props(AVFilterLink *outlink)
 {
     AVFilterContext *ctx = outlink->src;
@@ -279,6 +345,8 @@ static av_cold int rgavpp_config_props(AVFilterLink *outlink)
     in_frames_ctx = (AVHWFramesContext *)inlink->hw_frames_ctx->data;
     in_format     = in_frames_ctx->sw_format;
     out_format    = (r->format == AV_PIX_FMT_NONE) ? in_format : r->format;
+
+    config_force_format(ctx, in_format, &out_format);
 
     ret = set_size_info(ctx, inlink, outlink);
     if (ret < 0)
@@ -371,6 +439,16 @@ static av_cold void rgavpp_uninit(AVFilterContext *ctx)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 
 #define RKRGA_VPP_COMMON_OPTS \
+    { "force_yuv",    "Enforce planar YUV format output", OFFSET(force_yuv), AV_OPT_TYPE_INT, { .i64 = FORCE_YUV_DISABLE }, 0, FORCE_YUV_NB - 1, FLAGS, "force_yuv" }, \
+        { "disable",  NULL,                     0, AV_OPT_TYPE_CONST, { .i64 = FORCE_YUV_DISABLE  }, 0, 0, FLAGS, "force_yuv" }, \
+        { "8bit",     "8-bit",                  0, AV_OPT_TYPE_CONST, { .i64 = FORCE_YUV_8BIT     }, 0, 0, FLAGS, "force_yuv" }, \
+        { "10bit",    "10-bit uncompact/8-bit", 0, AV_OPT_TYPE_CONST, { .i64 = FORCE_YUV_10BIT    }, 0, 0, FLAGS, "force_yuv" }, \
+    { "force_chroma", "Enforce chroma of planar YUV format output", OFFSET(force_chroma), AV_OPT_TYPE_INT, { .i64 = FORCE_CHROMA_AUTO }, 0, FORCE_CHROMA_NB - 1, FLAGS, "force_chroma" }, \
+        { "auto",     "Match in/out chroma",    0, AV_OPT_TYPE_CONST, { .i64 = FORCE_CHROMA_AUTO  }, 0, 0, FLAGS, "force_chroma" }, \
+        { "420sp",    "4:2:0 semi-planar",      0, AV_OPT_TYPE_CONST, { .i64 = FORCE_CHROMA_420SP }, 0, 0, FLAGS, "force_chroma" }, \
+        { "420p",     "4:2:0 fully-planar",     0, AV_OPT_TYPE_CONST, { .i64 = FORCE_CHROMA_420P  }, 0, 0, FLAGS, "force_chroma" }, \
+        { "422sp",    "4:2:2 semi-planar",      0, AV_OPT_TYPE_CONST, { .i64 = FORCE_CHROMA_422SP }, 0, 0, FLAGS, "force_chroma" }, \
+        { "422p",     "4:2:2 fully-planar",     0, AV_OPT_TYPE_CONST, { .i64 = FORCE_CHROMA_422P  }, 0, 0, FLAGS, "force_chroma" }, \
     { "core", "Set multicore RGA scheduler core [use with caution]", OFFSET(rga.scheduler_core), AV_OPT_TYPE_FLAGS, { .i64 = 0 }, 0, INT_MAX, FLAGS, "core" }, \
         { "default",    NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, FLAGS, "core" }, \
         { "rga3_core0", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, FLAGS, "core" }, /* RGA3_SCHEDULER_CORE0 */ \
