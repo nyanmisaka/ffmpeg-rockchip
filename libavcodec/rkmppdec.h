@@ -59,6 +59,8 @@ typedef struct RKMPPDecContext {
     int            eof;
     int            info_change;
     int            errinfo_cnt;
+    int            queue_cnt;
+    int            queue_size;
 
     int            deint;
     int            afbc;
