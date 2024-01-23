@@ -955,10 +955,8 @@ av_cold int ff_rkrga_init(AVFilterContext *avctx, RKRGAParam *param)
             r->in_rga_frame_infos[0].blend_mode = premultiplied_alpha ? (0x4 | (1 << 12)) : 0x4;
             r->in_rga_frame_infos[0].blend_mode |= (param->in_global_alpha & 0xff) << 16; /* fg_global_alpha */
             r->in_rga_frame_infos[0].blend_mode |= 0xff << 24;                            /* bg_global_alpha */
-        } else {
+        } else
             r->in_rga_frame_infos[0].blend_mode = premultiplied_alpha ? 0x504 : 0x501;
-            r->in_rga_frame_infos[0].blend_mode |= (0xff << 16) | (0xff << 24);
-        }
 
         r->in_rga_frame_infos[1].overlay_x = FFMAX(param->overlay_x, 0);
         r->in_rga_frame_infos[1].overlay_y = FFMAX(param->overlay_y, 0);
