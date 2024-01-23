@@ -341,19 +341,6 @@ int av_image_check_sar(unsigned int w, unsigned int h, AVRational sar)
     return AVERROR(EINVAL);
 }
 
-static void image_copy_plane2(uint8_t       *dst, ptrdiff_t dst_linesize,
-                              const uint8_t *src, ptrdiff_t src_linesize,
-                              ptrdiff_t bytewidth, int height)
-{
-    if (!dst || !src)
-        return;
-    for (;height > 0; height--) {
-        memcpy(dst, src, bytewidth);
-        dst += dst_linesize;
-        src += src_linesize;
-    }
-}
-
 static void image_copy_plane(uint8_t       *dst, ptrdiff_t dst_linesize,
                              const uint8_t *src, ptrdiff_t src_linesize,
                              ptrdiff_t bytewidth, int height)
@@ -362,9 +349,11 @@ static void image_copy_plane(uint8_t       *dst, ptrdiff_t dst_linesize,
         return;
     av_assert0(FFABS(src_linesize) >= bytewidth);
     av_assert0(FFABS(dst_linesize) >= bytewidth);
-    image_copy_plane2(dst, dst_linesize,
-                      src, src_linesize,
-                      bytewidth, height);
+    for (;height > 0; height--) {
+        memcpy(dst, src, bytewidth);
+        dst += dst_linesize;
+        src += src_linesize;
+    }
 }
 
 void av_image_copy_plane_uc_from(uint8_t *dst, ptrdiff_t dst_linesize,
@@ -435,8 +424,7 @@ void av_image_copy(uint8_t *const dst_data[4], const int dst_linesizes[4],
                    enum AVPixelFormat pix_fmt, int width, int height)
 {
     ptrdiff_t dst_linesizes1[4], src_linesizes1[4];
-    int i, is_nv15_20 = pix_fmt == AV_PIX_FMT_NV15 ||
-                        pix_fmt == AV_PIX_FMT_NV20;
+    int i;
 
     for (i = 0; i < 4; i++) {
         dst_linesizes1[i] = dst_linesizes[i];
@@ -444,7 +432,7 @@ void av_image_copy(uint8_t *const dst_data[4], const int dst_linesizes[4],
     }
 
     image_copy(dst_data, dst_linesizes1, src_data, src_linesizes1, pix_fmt,
-               width, height, is_nv15_20 ? image_copy_plane2 : image_copy_plane);
+               width, height, image_copy_plane);
 }
 
 void av_image_copy_uc_from(uint8_t * const dst_data[4], const ptrdiff_t dst_linesizes[4],
