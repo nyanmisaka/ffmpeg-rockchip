@@ -90,6 +90,8 @@ static av_cold int rkmpp_decode_close(AVCodecContext *avctx)
     r->eof = 0;
     r->info_change = 0;
     r->errinfo_cnt = 0;
+    r->queue_cnt = 0;
+    r->queue_size = 0;
 
     if (r->mapi) {
         r->mapi->reset(r->mctx);
@@ -824,12 +826,17 @@ send_pkt:
         if (ret_send == 0) {
             /* send successful, continue until decoder input buffer is full */
             av_packet_unref(pkt);
-            return AVERROR(EAGAIN);
+            r->queue_cnt++;
+            if (r->queue_size <= 0 ||
+                r->queue_cnt < r->queue_size)
+                return AVERROR(EAGAIN);
         } else if (ret_send < 0 && ret_send != AVERROR(EAGAIN)) {
             /* something went wrong, raise error */
             av_log(avctx, AV_LOG_ERROR, "Decoder failed to send data: %d", ret_send);
             return ret_send;
-        }
+        } else
+            /* input buffer is full, estimate queue size */
+            r->queue_size = FFMAX(r->queue_cnt, r->queue_size);
     }
 
     if (r->eof)
@@ -852,6 +859,8 @@ get_frame:
         goto send_pkt;
     else if (ret_get < 0 && ret_get != AVERROR(EAGAIN))
         av_log(avctx, AV_LOG_ERROR, "Decoder failed to get frame: %d\n", ret_get);
+    else
+        r->queue_cnt--;
 
     return ret_get;
 }
@@ -867,6 +876,8 @@ static void rkmpp_decode_flush(AVCodecContext *avctx)
         r->eof = 0;
         r->info_change = 0;
         r->errinfo_cnt = 0;
+        r->queue_cnt = 0;
+        r->queue_size = 0;
 
         av_packet_unref(&r->last_pkt);
         av_frame_unref(&r->last_frame);
