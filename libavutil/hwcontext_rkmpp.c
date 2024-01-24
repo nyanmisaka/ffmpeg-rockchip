@@ -185,8 +185,8 @@ static AVBufferRef *rkmpp_drm_pool_alloc(void *opaque, size_t size)
     int i;
     const AVPixFmtDescriptor *pixdesc = av_pix_fmt_desc_get(hwfc->sw_format);
     const int bits_pp = av_get_padded_bits_per_pixel(pixdesc);
-    const int aligned_w = FFALIGN(hwfc->width * 6 / 5,  64);
-    const int aligned_h = FFALIGN(hwfc->height * 6 / 5, 64);
+    const int aligned_w = FFALIGN(hwfc->width * 5 / 4,  64);
+    const int aligned_h = FFALIGN(hwfc->height * 5 / 4, 64);
 
     MppBuffer mpp_buf = NULL;
     size_t mpp_buf_size = aligned_w * aligned_h * bits_pp / 8;
