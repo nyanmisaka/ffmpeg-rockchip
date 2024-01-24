@@ -83,6 +83,30 @@ static uint32_t rkmpp_get_av_format(MppFrameFormat mpp_fmt)
     }
 }
 
+static int get_afbc_byte_stride(const AVPixFmtDescriptor *desc,
+                                int *stride, int reverse)
+{
+    if (!desc || !stride || *stride <= 0)
+        return AVERROR(EINVAL);
+
+    if (desc->nb_components == 1 ||
+        (desc->flags & AV_PIX_FMT_FLAG_RGB) ||
+        (!(desc->flags & AV_PIX_FMT_FLAG_RGB) &&
+         !(desc->flags & AV_PIX_FMT_FLAG_PLANAR)))
+        return 0;
+
+    if (desc->log2_chroma_w == 1 && desc->log2_chroma_h == 1)
+        *stride = reverse ? (*stride * 2 / 3) : (*stride * 3 / 2);
+    else if (desc->log2_chroma_w == 1 && !desc->log2_chroma_h)
+        *stride = reverse ? (*stride / 2) : (*stride * 2);
+    else if (!desc->log2_chroma_w && !desc->log2_chroma_h)
+        *stride = reverse ? (*stride / 3) : (*stride * 3);
+    else
+        return AVERROR(EINVAL);
+
+    return (*stride > 0) ? 0 : AVERROR(EINVAL);
+}
+
 static av_cold int rkmpp_decode_close(AVCodecContext *avctx)
 {
     RKMPPDecContext *r = avctx->priv_data;
@@ -475,6 +499,7 @@ static int rkmpp_export_frame(AVCodecContext *avctx, AVFrame *frame, MppFrame mp
     RKMPPDecContext *r = avctx->priv_data;
     AVRKMPPDRMFrameDescriptor *desc = NULL;
     AVDRMLayerDescriptor *layer = NULL;
+    const AVPixFmtDescriptor *pix_desc;
     MppBuffer mpp_buf = NULL;
     MppFrameFormat mpp_fmt = MPP_FMT_BUTT;
     int mpp_frame_mode = 0;
@@ -500,24 +525,35 @@ static int rkmpp_export_frame(AVCodecContext *avctx, AVFrame *frame, MppFrame mp
     mpp_fmt = mpp_frame_get_fmt(mpp_frame);
     is_afbc = mpp_fmt & MPP_FRAME_FBC_MASK;
 
-    if (is_afbc)
+    desc->drm_desc.nb_layers = 1;
+    layer = &desc->drm_desc.layers[0];
+    layer->planes[0].object_index = 0;
+
+    if (is_afbc) {
         desc->drm_desc.objects[0].format_modifier =
             DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_SPARSE | AFBC_FORMAT_MOD_BLOCK_SIZE_16x16);
 
-    desc->drm_desc.nb_layers = 1;
-    layer = &desc->drm_desc.layers[0];
-    layer->format = is_afbc ? rkmpp_get_drm_afbc_format(mpp_fmt)
-                            : rkmpp_get_drm_format(mpp_fmt);
+        layer->format = rkmpp_get_drm_afbc_format(mpp_fmt);
+        layer->nb_planes = 1;
+        layer->planes[0].offset = 0;
+        layer->planes[0].pitch  = mpp_frame_get_hor_stride(mpp_frame);
 
-    layer->nb_planes = is_afbc ? 1 : 2;
-    layer->planes[0].object_index = 0;
-    layer->planes[0].offset =
-        is_afbc ? mpp_frame_get_offset_y(mpp_frame) * mpp_frame_get_hor_stride(mpp_frame) : 0;
-    layer->planes[0].pitch = mpp_frame_get_hor_stride(mpp_frame);
+        pix_desc = av_pix_fmt_desc_get(avctx->sw_pix_fmt);
+        if ((ret = get_afbc_byte_stride(pix_desc, (int *)&layer->planes[0].pitch, 0)) < 0)
+            return ret;
 
-    layer->planes[1].object_index = 0;
-    layer->planes[1].offset = layer->planes[0].pitch * mpp_frame_get_ver_stride(mpp_frame);
-    layer->planes[1].pitch = layer->planes[0].pitch;
+        /* MPP specific AFBC src_y offset, not memory address offset */
+        frame->crop_top = mpp_frame_get_offset_y(mpp_frame);
+    } else {
+        layer->format = rkmpp_get_drm_format(mpp_fmt);
+        layer->nb_planes = 2;
+        layer->planes[0].offset = 0;
+        layer->planes[0].pitch  = mpp_frame_get_hor_stride(mpp_frame);
+
+        layer->planes[1].object_index = 0;
+        layer->planes[1].offset = layer->planes[0].pitch * mpp_frame_get_ver_stride(mpp_frame);
+        layer->planes[1].pitch  = layer->planes[0].pitch;
+    }
 
     if ((ret = frame_create_buf(frame, mpp_frame, mpp_frame_get_buf_size(mpp_frame),
                                 rkmpp_free_mpp_frame, mpp_frame, AV_BUFFER_FLAG_READONLY)) < 0)
