@@ -136,6 +136,16 @@ static int get_pixel_stride(const AVDRMObjectDescriptor *object,
     return (*ws > 0 && *hs > 0) ? 0 : AVERROR(EINVAL);
 }
 
+static int get_afbc_pixel_stride(float bytes_pp, int *stride, int reverse)
+{
+    if (!stride || *stride <= 0 || bytes_pp <= 0)
+        return AVERROR(EINVAL);
+
+    *stride = reverse ? (*stride / bytes_pp) : (*stride * bytes_pp);
+
+    return (*stride > 0) ? 0 : AVERROR(EINVAL);
+}
+
 /* Canonical formats: https://dri.freedesktop.org/docs/drm/gpu/afbc.html */
 static uint32_t get_drm_afbc_format(enum AVPixelFormat pix_fmt)
 {
@@ -353,12 +363,11 @@ static RGAFrame *submit_frame(RKRGAContext *r, AVFilterLink *inlink,
     RGAFrameInfo *in_info = &r->in_rga_frame_infos[nb_link];
     RGAFrameInfo *out_info = &r->out_rga_frame_info;
     int w_stride = 0, h_stride = 0;
-    int ret;
     const AVDRMFrameDescriptor *desc;
     const AVDRMLayerDescriptor *layer;
     const AVDRMPlaneDescriptor *plane0;
     RGAFrame **frame_list = NULL;
-    int is_afbc = 0;
+    int ret, is_afbc = 0;
 
     if (pat_preproc && !nb_link)
         return NULL;
@@ -382,13 +391,18 @@ static RGAFrame *submit_frame(RKRGAContext *r, AVFilterLink *inlink,
     if (desc->objects[0].fd < 0)
         return NULL;
 
-    ret = get_pixel_stride(&desc->objects[0],
-                           &desc->layers[0],
-                           (in_info->pix_desc->flags & AV_PIX_FMT_FLAG_RGB),
-                           (in_info->pix_desc->flags & AV_PIX_FMT_FLAG_PLANAR),
-                           in_info->bytes_pp, &w_stride, &h_stride);
-    if (ret < 0 || !w_stride || !h_stride)
-        return NULL;
+    is_afbc = drm_is_afbc(desc->objects[0].format_modifier);
+    if (!is_afbc) {
+        ret = get_pixel_stride(&desc->objects[0],
+                               &desc->layers[0],
+                               (in_info->pix_desc->flags & AV_PIX_FMT_FLAG_RGB),
+                               (in_info->pix_desc->flags & AV_PIX_FMT_FLAG_PLANAR),
+                               in_info->bytes_pp, &w_stride, &h_stride);
+        if (ret < 0 || !w_stride || !h_stride) {
+            av_log(ctx, AV_LOG_ERROR, "Failed to get frame strides\n");
+            return NULL;
+        }
+    }
 
     info.fd           = desc->objects[0].fd;
     info.format       = in_info->rga_fmt;
@@ -403,8 +417,6 @@ static RGAFrame *submit_frame(RKRGAContext *r, AVFilterLink *inlink,
         info.blend    = (do_overlay && !pat_preproc) ? in_info->blend_mode : 0;
     }
 
-    is_afbc = drm_is_afbc(desc->objects[0].format_modifier);
-
     if (is_afbc && (r->is_rga2_used || out_info->scheduler_core == 0x4)) {
         av_log(ctx, AV_LOG_ERROR, "Input format '%s' with AFBC modifier is not supported by RGA2\n",
                av_get_pix_fmt_name(in_info->pix_fmt));
@@ -416,7 +428,7 @@ static RGAFrame *submit_frame(RKRGAContext *r, AVFilterLink *inlink,
         out_info->scheduler_core == (out_info->scheduler_core & 0x3)) {
         if (!is_afbc && !is_pixel_stride_rga3_compat(w_stride, h_stride, in_info->rga_fmt)) {
             r->is_rga2_used = 1;
-            av_log(ctx, AV_LOG_WARNING, "Input pixel stride (%dx%d) format %s is not supported by RGA3\n",
+            av_log(ctx, AV_LOG_WARNING, "Input pixel stride (%dx%d) format '%s' is not supported by RGA3\n",
                    w_stride, h_stride, av_get_pix_fmt_name(in_info->pix_fmt));
         }
 
@@ -438,20 +450,25 @@ static RGAFrame *submit_frame(RKRGAContext *r, AVFilterLink *inlink,
                      in_info->act_w, in_info->act_h,
                      w_stride, h_stride, in_info->rga_fmt);
 
-    layer = &desc->layers[0];
-    plane0 = &layer->planes[0];
     if (is_afbc) {
         int afbc_offset_y = 0;
-        int hor_stride = plane0->pitch;
         uint32_t drm_afbc_fmt = get_drm_afbc_format(in_info->pix_fmt);
 
-        if (layer->planes[0].offset > 0) {
-            afbc_offset_y = layer->planes[0].offset / hor_stride;
+        if (rga_frame->frame->crop_top > 0) {
+            afbc_offset_y = rga_frame->frame->crop_top;
             info.rect.yoffset += afbc_offset_y;
         }
 
+        layer = &desc->layers[0];
+        plane0 = &layer->planes[0];
         if (drm_afbc_fmt == layer->format) {
-            info.rect.wstride = FFALIGN(inlink->w, RK_RGA_AFBC_STRIDE_ALIGN);
+            info.rect.wstride = plane0->pitch;
+            if ((ret = get_afbc_pixel_stride(in_info->bytes_pp, &info.rect.wstride, 1)) < 0)
+                return NULL;
+
+            if (info.rect.wstride % RK_RGA_AFBC_STRIDE_ALIGN)
+                info.rect.wstride = FFALIGN(inlink->w, RK_RGA_AFBC_STRIDE_ALIGN);
+
             info.rect.hstride = FFALIGN(inlink->h + afbc_offset_y, RK_RGA_AFBC_STRIDE_ALIGN);
         } else {
             av_log(ctx, AV_LOG_ERROR, "Input format '%s' with AFBC modifier is not supported\n",
@@ -473,7 +490,6 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
     AVFilterContext *ctx = outlink->src;
     AVFilterLink *inlink = ctx->inputs[0];
     RGAFrame        *out_frame;
-    int              ret;
     rga_info_t info = { .mmuFlag = 1, };
     RGAFrameInfo *in0_info = &r->in_rga_frame_infos[0];
     RGAFrameInfo *in1_info = ctx->nb_inputs > 1 ? &r->in_rga_frame_infos[1] : NULL;
@@ -483,6 +499,7 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
     AVDRMFrameDescriptor *desc;
     AVDRMLayerDescriptor *layer;
     RGAFrame **frame_list = NULL;
+    int ret, is_afbc = 0;
 
     if (!out_info || !hw_frame_ctx)
         return NULL;
@@ -503,6 +520,7 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
         av_log(ctx, AV_LOG_ERROR, "Failed to copy metadata fields from in to out: %d\n", ret);
         goto fail;
     }
+    out_frame->frame->crop_top = 0;
 
     if ((ret = av_hwframe_get_buffer(hw_frame_ctx, out_frame->frame, 0)) < 0) {
         av_log(ctx, AV_LOG_ERROR, "Cannot allocate an internal frame: %d\n", ret);
@@ -513,13 +531,28 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
     if (desc->objects[0].fd < 0)
         goto fail;
 
+    if (r->is_rga2_used || out_info->scheduler_core == 0x4) {
+        if (pat_preproc && (info.rect.width > 4096 || info.rect.height > 4096)) {
+            av_log(ctx, AV_LOG_ERROR, "Max supported output size of RGA2 is 4096x4096\n");
+            goto fail;
+        }
+        if (r->afbc_out && !pat_preproc) {
+            av_log(ctx, AV_LOG_WARNING, "Output format '%s' with AFBC modifier is not supported by RGA2\n",
+                   av_get_pix_fmt_name(out_info->pix_fmt));
+            r->afbc_out = 0;
+        }
+    }
+
+    is_afbc = r->afbc_out && !pat_preproc;
     ret = get_pixel_stride(&desc->objects[0],
                            &desc->layers[0],
                            (out_info->pix_desc->flags & AV_PIX_FMT_FLAG_RGB),
                            (out_info->pix_desc->flags & AV_PIX_FMT_FLAG_PLANAR),
                            out_info->bytes_pp, &w_stride, &h_stride);
-    if (ret < 0 || !w_stride || !h_stride)
+    if (!is_afbc && (ret < 0 || !w_stride || !h_stride)) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to get frame strides\n");
         goto fail;
+    }
 
     info.fd           = desc->objects[0].fd;
     info.format       = out_info->rga_fmt;
@@ -544,19 +577,7 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
                      out_info->act_w, out_info->act_h,
                      w_stride, h_stride, out_info->rga_fmt);
 
-    if (r->is_rga2_used || out_info->scheduler_core == 0x4) {
-        if (pat_preproc && (info.rect.width > 4096 || info.rect.height > 4096)) {
-            av_log(ctx, AV_LOG_ERROR, "Max supported output size of RGA2 is 4096x4096\n");
-            goto fail;
-        }
-        if (r->afbc_out && !pat_preproc) {
-            av_log(ctx, AV_LOG_WARNING, "Output format '%s' with AFBC modifier is not supported by RGA2\n",
-                   av_get_pix_fmt_name(out_info->pix_fmt));
-            r->afbc_out = 0;
-        }
-    }
-
-    if (r->afbc_out && !pat_preproc) {
+    if (is_afbc) {
         uint32_t drm_afbc_fmt = get_drm_afbc_format(out_info->pix_fmt);
 
         if (drm_afbc_fmt == DRM_FORMAT_INVALID) {
@@ -566,12 +587,16 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
             goto exit;
         }
 
-        desc->objects[0].format_modifier =
-            DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_SPARSE | AFBC_FORMAT_MOD_BLOCK_SIZE_16x16);
+        w_stride = FFALIGN(pat_preproc ? inlink->w : outlink->w, RK_RGA_AFBC_STRIDE_ALIGN);
+        h_stride = FFALIGN(pat_preproc ? inlink->h : outlink->h, RK_RGA_AFBC_STRIDE_ALIGN);
 
-        layer = &desc->layers[0];
-        layer->nb_planes = 1;
-        layer->format = drm_afbc_fmt;
+        if ((info.rect.format == RK_FORMAT_YCbCr_420_SP_10B ||
+             info.rect.format == RK_FORMAT_YCbCr_422_SP_10B) && (w_stride % 64)) {
+            av_log(ctx, AV_LOG_WARNING, "Output pixel wstride '%d' format '%s' is not supported by RGA3 AFBC\n",
+                   w_stride, av_get_pix_fmt_name(out_info->pix_fmt));
+            r->afbc_out = 0;
+            goto exit;
+        }
 
         /* Inverted RGB/BGR order in FBCE */
         switch (info.rect.format) {
@@ -583,9 +608,22 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
             break;
         }
 
-        info.rect.wstride = FFALIGN(pat_preproc ? inlink->w : outlink->w, RK_RGA_AFBC_STRIDE_ALIGN);
-        info.rect.hstride = FFALIGN(pat_preproc ? inlink->h : outlink->h, RK_RGA_AFBC_STRIDE_ALIGN);
+        info.rect.wstride = w_stride;
+        info.rect.hstride = h_stride;
         info.rd_mode = 1 << 1; /* IM_FBC_MODE */
+
+        desc->objects[0].format_modifier =
+            DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_SPARSE | AFBC_FORMAT_MOD_BLOCK_SIZE_16x16);
+
+        layer = &desc->layers[0];
+        layer->format = drm_afbc_fmt;
+        layer->nb_planes = 1;
+
+        layer->planes[0].offset = 0;
+        layer->planes[0].pitch  = info.rect.wstride;
+
+        if ((ret = get_afbc_pixel_stride(out_info->bytes_pp, (int *)&layer->planes[0].pitch, 0)) < 0)
+            goto fail;
     }
 
 exit:
