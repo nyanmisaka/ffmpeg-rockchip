@@ -140,10 +140,15 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
 {
     RKMPPDecContext *r = avctx->priv_data;
     MppCodingType coding_type = MPP_VIDEO_CodingUnused;
+    const char *opts_env = NULL;
     int ret, is_fmt_supported = 0;
     enum AVPixelFormat pix_fmts[3] = { AV_PIX_FMT_DRM_PRIME,
                                        AV_PIX_FMT_NV12,
                                        AV_PIX_FMT_NONE };
+
+    opts_env = getenv("FFMPEG_RKMPP_DEC_OPT");
+    if (opts_env && av_set_options_string(r, opts_env, "=", " ") <= 0)
+        av_log(avctx, AV_LOG_WARNING, "Unable to set decoder options from env\n");
 
     switch (avctx->pix_fmt) {
     case AV_PIX_FMT_YUV420P:
@@ -674,6 +679,7 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
     }
 
     if (r->info_change = mpp_frame_get_info_change(mpp_frame)) {
+        char *opts = NULL;
         int fast_parse = r->fast_parse;
         int mpp_frame_mode = mpp_frame_get_mode(mpp_frame);
         const MppFrameFormat mpp_fmt = mpp_frame_get_fmt(mpp_frame);
@@ -683,8 +689,10 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
 
         av_log(avctx, AV_LOG_VERBOSE, "Noticed an info change\n");
 
-        if (r->afbc && !(mpp_fmt & MPP_FRAME_FBC_MASK))
+        if (r->afbc && !(mpp_fmt & MPP_FRAME_FBC_MASK)) {
             av_log(avctx, AV_LOG_VERBOSE, "AFBC is requested but not supported\n");
+            r->afbc = 0;
+        }
 
         pix_fmts[1] = rkmpp_get_av_format(mpp_fmt & MPP_FRAME_FMT_MASK);
 
@@ -701,6 +709,9 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
         avctx->coded_width  = FFALIGN(avctx->width,  64);
         avctx->coded_height = FFALIGN(avctx->height, 64);
         rkmpp_export_avctx_color_props(avctx, mpp_frame);
+
+        if (av_opt_serialize(r, 0, 0, &opts, '=', ' ') >= 0)
+            av_log(avctx, AV_LOG_VERBOSE, "Decoder options: %s\n", opts);
 
         av_log(avctx, AV_LOG_VERBOSE, "Configured with size: %dx%d | pix_fmt: %s | sw_pix_fmt: %s\n",
                avctx->width, avctx->height,
