@@ -60,6 +60,7 @@ typedef struct RGAVppContext {
 
 enum {
     FORCE_YUV_DISABLE,
+    FORCE_YUV_AUTO,
     FORCE_YUV_8BIT,
     FORCE_YUV_10BIT,
     FORCE_YUV_NB
@@ -291,8 +292,12 @@ static av_cold void config_force_format(AVFilterContext *ctx,
     if (!out_format)
         return;
 
-    out_depth = (r->force_yuv == FORCE_YUV_8BIT) ? 8 :
-                (r->force_yuv == FORCE_YUV_10BIT) ? 10 : 0;
+    if (r->force_yuv == FORCE_YUV_AUTO)
+        out_depth = (in_format == AV_PIX_FMT_NV15 ||
+                     in_format == AV_PIX_FMT_NV20) ? 10 : 0;
+    else
+        out_depth = (r->force_yuv == FORCE_YUV_8BIT) ? 8 :
+                    (r->force_yuv == FORCE_YUV_10BIT) ? 10 : 0;
     if (!out_depth)
         return;
 
@@ -441,6 +446,7 @@ static av_cold void rgavpp_uninit(AVFilterContext *ctx)
 #define RKRGA_VPP_COMMON_OPTS \
     { "force_yuv",    "Enforce planar YUV format output", OFFSET(force_yuv), AV_OPT_TYPE_INT, { .i64 = FORCE_YUV_DISABLE }, 0, FORCE_YUV_NB - 1, FLAGS, "force_yuv" }, \
         { "disable",  NULL,                     0, AV_OPT_TYPE_CONST, { .i64 = FORCE_YUV_DISABLE  }, 0, 0, FLAGS, "force_yuv" }, \
+        { "auto",     "Match in/out bit depth", 0, AV_OPT_TYPE_CONST, { .i64 = FORCE_YUV_AUTO     }, 0, 0, FLAGS, "force_yuv" }, \
         { "8bit",     "8-bit",                  0, AV_OPT_TYPE_CONST, { .i64 = FORCE_YUV_8BIT     }, 0, 0, FLAGS, "force_yuv" }, \
         { "10bit",    "10-bit uncompact/8-bit", 0, AV_OPT_TYPE_CONST, { .i64 = FORCE_YUV_10BIT    }, 0, 0, FLAGS, "force_yuv" }, \
     { "force_chroma", "Enforce chroma of planar YUV format output", OFFSET(force_chroma), AV_OPT_TYPE_INT, { .i64 = FORCE_CHROMA_AUTO }, 0, FORCE_CHROMA_NB - 1, FLAGS, "force_chroma" }, \
