@@ -54,8 +54,6 @@ typedef struct RKMPPDecContext {
     AVBufferRef   *hwframe;
 
     AVPacket       last_pkt;
-    AVFrame        last_frame;
-
     int            eof;
     int            info_change;
     int            errinfo_cnt;
