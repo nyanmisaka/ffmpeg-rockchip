@@ -665,9 +665,12 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
     }
     if (mpp_frame_get_eos(mpp_frame)) {
         av_log(avctx, AV_LOG_DEBUG, "Received a 'EOS' frame\n");
-        r->eof = 1;
-        ret = AVERROR_EOF;
-        goto exit;
+        /* EOS frame may contain valid data */
+        if (!mpp_frame_get_buffer(mpp_frame)) {
+            r->eof = 1;
+            ret = AVERROR_EOF;
+            goto exit;
+        }
     }
     if (mpp_frame_get_discard(mpp_frame)) {
         av_log(avctx, AV_LOG_DEBUG, "Received a 'discard' frame\n");
@@ -929,7 +932,6 @@ static void rkmpp_decode_flush(AVCodecContext *avctx)
         r->queue_size = 0;
 
         av_packet_unref(&r->last_pkt);
-        av_frame_unref(&r->last_frame);
     } else
         av_log(avctx, AV_LOG_ERROR, "Failed to reset MPP context: %d\n", ret);
 }
