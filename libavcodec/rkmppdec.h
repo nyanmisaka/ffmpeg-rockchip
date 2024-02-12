@@ -64,6 +64,7 @@ typedef struct RKMPPDecContext {
     int            afbc;
     int            fast_parse;
     int            buf_mode;
+    int            forcedrm;
 } RKMPPDecContext;
 
 enum {
@@ -98,6 +99,7 @@ static const AVOption options[] = {
     { "buf_mode",   "Set the buffer mode for MPP decoder", OFFSET(buf_mode), AV_OPT_TYPE_INT, { .i64 = RKMPP_DEC_HALF_INTERNAL }, 0, 1, VD, "buf_mode" },
         { "half",   "Half internal mode",                      0, AV_OPT_TYPE_CONST, { .i64 = RKMPP_DEC_HALF_INTERNAL }, 0, 0, VD, "buf_mode" },
         { "ext",    "Pure external mode",                      0, AV_OPT_TYPE_CONST, { .i64 = RKMPP_DEC_PURE_EXTERNAL }, 0, 0, VD, "buf_mode" },
+    { "forcedrm",   "Force drm_prime output", OFFSET(forcedrm), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VD },
     { NULL }
 };
 

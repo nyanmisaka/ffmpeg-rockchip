@@ -176,6 +176,11 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
         break;
     }
 
+    if (r->forcedrm){
+        is_fmt_supported = 1;
+        avctx->pix_fmt = AV_PIX_FMT_DRM_PRIME;
+    }
+
     if (avctx->pix_fmt != AV_PIX_FMT_DRM_PRIME) {
         if (!is_fmt_supported) {
             av_log(avctx, AV_LOG_ERROR, "MPP doesn't support codec '%s' with pix_fmt '%s'\n",
