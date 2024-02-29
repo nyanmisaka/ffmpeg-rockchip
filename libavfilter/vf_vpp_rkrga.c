@@ -286,6 +286,8 @@ static av_cold void config_force_format(AVFilterContext *ctx,
 {
     RGAVppContext *r = ctx->priv;
     const AVPixFmtDescriptor *desc;
+    const char *rga_ver = NULL;
+    int has_rga3 = 0;
     int out_depth, force_chroma;
     int is_yuv, is_fully_planar;
 
@@ -298,6 +300,13 @@ static av_cold void config_force_format(AVFilterContext *ctx,
     else
         out_depth = (r->force_yuv == FORCE_YUV_8BIT) ? 8 :
                     (r->force_yuv == FORCE_YUV_10BIT) ? 10 : 0;
+
+    /* Auto fallback to 8-bit fmts on RGA2 */
+    rga_ver = querystring(RGA_VERSION);
+    has_rga3 = !!strstr(rga_ver, "RGA_3");
+    if (out_depth >= 10 && !has_rga3)
+        out_depth = 8;
+
     if (!out_depth)
         return;
 
