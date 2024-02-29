@@ -1048,9 +1048,24 @@ static void set_rga_async_frame_lock_status(RGAAsyncFrame *frame, int lock)
         frame->pat->locked = status;
 }
 
+static void rga_drain_fifo(RKRGAContext *r)
+{
+    RGAAsyncFrame aframe;
+
+    while (r->async_fifo && av_fifo_read(r->async_fifo, &aframe, 1) >= 0) {
+        if (imsync(aframe.dst->info.out_fence_fd) != IM_STATUS_SUCCESS)
+            av_log(NULL, AV_LOG_WARNING, "RGA sync failed\n");
+
+        set_rga_async_frame_lock_status(&aframe, 0);
+    }
+}
+
 av_cold int ff_rkrga_close(AVFilterContext *avctx)
 {
     RKRGAContext *r = avctx->priv;
+
+    /* Drain the fifo during filter reset */
+    rga_drain_fifo(r);
 
     clear_frame_list(&r->src_frame_list);
     clear_frame_list(&r->dst_frame_list);
