@@ -301,14 +301,14 @@ static av_cold void config_force_format(AVFilterContext *ctx,
         out_depth = (r->force_yuv == FORCE_YUV_8BIT) ? 8 :
                     (r->force_yuv == FORCE_YUV_10BIT) ? 10 : 0;
 
+    if (!out_depth)
+        return;
+
     /* Auto fallback to 8-bit fmts on RGA2 */
     rga_ver = querystring(RGA_VERSION);
     has_rga3 = !!strstr(rga_ver, "RGA_3");
     if (out_depth >= 10 && !has_rga3)
         out_depth = 8;
-
-    if (!out_depth)
-        return;
 
     desc = av_pix_fmt_desc_get(in_format);
     is_yuv = !(desc->flags & AV_PIX_FMT_FLAG_RGB) && desc->nb_components >= 2;
