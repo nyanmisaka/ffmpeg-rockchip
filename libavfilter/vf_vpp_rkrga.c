@@ -392,24 +392,26 @@ static int rgavpp_activate(AVFilterContext *ctx)
     AVFilterLink *outlink = ctx->outputs[0];
     RGAVppContext      *r = ctx->priv;
     AVFrame *in = NULL;
-    int ret, status = 0;
+    int ret, at_eof = 0, status = 0;
     int64_t pts = AV_NOPTS_VALUE;
 
     FF_FILTER_FORWARD_STATUS_BACK(outlink, inlink);
 
-    if (!r->rga.eof) {
+    if (r->rga.eof)
+        at_eof = 1;
+    else {
         ret = ff_inlink_consume_frame(inlink, &in);
         if (ret < 0)
             return ret;
 
         if (ff_inlink_acknowledge_status(inlink, &status, &pts)) {
             if (status == AVERROR_EOF) {
-                r->rga.eof = 1;
+                at_eof = 1;
             }
         }
     }
 
-    if (in || r->rga.eof) {
+    if (in) {
         ret = ff_rkrga_filter_frame(&r->rga, inlink, in, NULL, NULL);
         av_frame_free(&in);
         if (ret < 0)
@@ -417,8 +419,10 @@ static int rgavpp_activate(AVFilterContext *ctx)
         else if (!r->rga.got_frame)
             goto not_ready;
 
-        if (r->rga.eof)
+        if (at_eof) {
+            r->rga.eof = 1;
             goto eof;
+        }
 
         if (r->rga.got_frame) {
             r->rga.got_frame = 0;
@@ -427,15 +431,19 @@ static int rgavpp_activate(AVFilterContext *ctx)
     }
 
 not_ready:
-    if (r->rga.eof)
+    if (at_eof) {
+        r->rga.eof = 1;
         goto eof;
+    }
 
     FF_FILTER_FORWARD_WANTED(outlink, inlink);
     return FFERROR_NOT_READY;
 
 eof:
+    ff_rkrga_filter_frame(&r->rga, inlink, NULL, NULL, NULL);
+
     pts = av_rescale_q(pts, inlink->time_base, outlink->time_base);
-    ff_outlink_set_status(outlink, status, pts);
+    ff_outlink_set_status(outlink, AVERROR_EOF, pts);
     return 0;
 }
 
