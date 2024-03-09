@@ -270,6 +270,7 @@ static int rgaoverlay_activate(AVFilterContext *ctx)
     AVFilterLink *inlink_overlay = ctx->inputs[1];
     AVFilterLink *outlink        = ctx->outputs[0];
     int i, ret;
+    int64_t pts = AV_NOPTS_VALUE;
 
     ret = ff_framesync_activate(&r->fs);
     if (ret < 0)
@@ -277,18 +278,20 @@ static int rgaoverlay_activate(AVFilterContext *ctx)
 
     if (r->fs.eof) {
         r->rga.eof = 1;
+        pts = r->fs.pts;
         goto eof;
     }
 
-    if (!r->rga.got_frame) {
+    if (r->rga.got_frame)
+        r->rga.got_frame = 0;
+    else {
         for (i = 0; i < ctx->nb_inputs; i++) {
             if (!ff_inlink_check_available_frame(ctx->inputs[i])) {
                 FF_FILTER_FORWARD_WANTED(outlink, ctx->inputs[i]);
             }
         }
         return FFERROR_NOT_READY;
-    } else
-        r->rga.got_frame = 0;
+    }
 
     return 0;
 
@@ -296,7 +299,9 @@ eof:
     ff_rkrga_filter_frame(&r->rga,
                           inlink_main, NULL,
                           inlink_overlay, NULL);
-    ff_outlink_set_status(outlink, AVERROR_EOF, AV_NOPTS_VALUE);
+
+    pts = av_rescale_q(pts, inlink_main->time_base, outlink->time_base);
+    ff_outlink_set_status(outlink, AVERROR_EOF, pts);
     return 0;
 }
 
