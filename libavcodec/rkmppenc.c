@@ -774,6 +774,8 @@ send:
 
 get:
     ret = rkmpp_get_packet(avctx, packet);
+    if (!frame && ret == AVERROR(EAGAIN))
+        goto send;
     if (ret == AVERROR_EOF ||
         ret == AVERROR(EAGAIN))
         *got_packet = 0;
