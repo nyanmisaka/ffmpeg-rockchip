@@ -308,9 +308,11 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
 
     mpp_enc_cfg_set_s32(cfg, "rc:fps_in_flex", 0);
     mpp_enc_cfg_set_s32(cfg, "rc:fps_in_num", fps_num);
+    mpp_enc_cfg_set_s32(cfg, "rc:fps_in_denom", fps_den);
     mpp_enc_cfg_set_s32(cfg, "rc:fps_in_denorm", fps_den);
     mpp_enc_cfg_set_s32(cfg, "rc:fps_out_flex", 0);
     mpp_enc_cfg_set_s32(cfg, "rc:fps_out_num",fps_num);
+    mpp_enc_cfg_set_s32(cfg, "rc:fps_out_denom", fps_den);
     mpp_enc_cfg_set_s32(cfg, "rc:fps_out_denorm", fps_den);
 
     mpp_enc_cfg_set_s32(cfg, "rc:gop", FFMAX(avctx->gop_size, 1));
@@ -448,6 +450,10 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
             avctx->level = r->level;
             mpp_enc_cfg_set_s32(cfg, "h265:profile", avctx->profile);
             mpp_enc_cfg_set_s32(cfg, "h265:level", avctx->level);
+            if (avctx->level >= 120) {
+                mpp_enc_cfg_set_s32(cfg, "h265:tier", r->tier);
+                av_log(avctx, AV_LOG_VERBOSE, "Tier is set to %d\n", r->tier);
+            }
 
             switch (avctx->profile) {
             case FF_PROFILE_HEVC_MAIN:
