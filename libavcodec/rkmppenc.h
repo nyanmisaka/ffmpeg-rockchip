@@ -72,6 +72,7 @@ typedef struct RKMPPEncContext {
     int                qp_min_i;
     int                surfaces;
     int                profile;
+    int                tier;
     int                level;
     int                coder;
     int                dct8x8;
@@ -150,6 +151,10 @@ static const AVOption hevc_options[] = {
     { "profile", "Set the encoding profile restriction", OFFSET(profile), AV_OPT_TYPE_INT,
             { .i64 = FF_PROFILE_HEVC_MAIN }, -1, FF_PROFILE_HEVC_MAIN, VE, "profile" },
         { "main",       NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FF_PROFILE_HEVC_MAIN }, INT_MIN, INT_MAX, VE, "profile" },
+    { "tier", "Set the encoding profile tier restriction", OFFSET(tier), AV_OPT_TYPE_INT,
+            { .i64 = 1 }, 0, 1, VE, "tier" },
+        { "main",       NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, INT_MIN, INT_MAX, VE, "tier" },
+        { "high",       NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, INT_MIN, INT_MAX, VE, "tier" },
     { "level", "Set the encoding level restriction", OFFSET(level), AV_OPT_TYPE_INT,
             { .i64 = 0 }, FF_LEVEL_UNKNOWN, 186, VE, "level" },
         { "1",          NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 30 }, 0, 0, VE, "level" },
