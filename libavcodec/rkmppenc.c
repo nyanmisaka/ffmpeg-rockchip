@@ -681,7 +681,7 @@ static void rkmpp_free_packet_buf(void *opaque, uint8_t *data)
     mpp_packet_deinit(&mpp_pkt);
 }
 
-static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet)
+static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet, int timeout)
 {
     RKMPPEncContext *r = avctx->priv_data;
     MppPacket mpp_pkt = NULL;
@@ -689,6 +689,11 @@ static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet)
     MppFrame mpp_frame = NULL;
     MppBuffer mpp_buf = NULL;
     int ret, key_frame = 0;
+
+    if ((ret = r->mapi->control(r->mctx, MPP_SET_OUTPUT_TIMEOUT, (MppParam)&timeout)) != MPP_OK) {
+        av_log(avctx, AV_LOG_ERROR, "Failed to set output timeout: %d\n", ret);
+        return AVERROR_EXTERNAL;
+    }
 
     if ((ret = r->mapi->encode_get_packet(r->mctx, &mpp_pkt)) != MPP_OK) {
         int log_level = (ret == MPP_NOK) ? AV_LOG_DEBUG : AV_LOG_ERROR;
@@ -759,10 +764,11 @@ static int rkmpp_encode_frame(AVCodecContext *avctx, AVPacket *packet,
 {
     RKMPPEncContext *r = avctx->priv_data;
     MPPEncFrame *mpp_enc_frame = NULL;
-    int surfaces = r->surfaces;
     int ret;
+    int timeout = (avctx->flags & AV_CODEC_FLAG_LOW_DELAY)
+                  ? MPP_TIMEOUT_BLOCK : MPP_TIMEOUT_NON_BLOCK;
 
-    if (get_used_frame_count(r->frame_list) > surfaces)
+    if (get_used_frame_count(r->frame_list) > H26X_ASYNC_FRAMES)
         goto get;
 
     mpp_enc_frame = rkmpp_submit_frame(avctx, (AVFrame *)frame);
@@ -779,7 +785,7 @@ send:
         return ret;
 
 get:
-    ret = rkmpp_get_packet(avctx, packet);
+    ret = rkmpp_get_packet(avctx, packet, timeout);
     if (!frame && ret == AVERROR(EAGAIN))
         goto send;
     if (ret == AVERROR_EOF ||
