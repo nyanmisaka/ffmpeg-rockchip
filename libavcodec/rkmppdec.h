@@ -41,7 +41,6 @@
 #include "libavutil/pixdesc.h"
 
 #define MAX_ERRINFO_COUNT 100
-#define MAX_RETRY_COUNT   100
 
 typedef struct RKMPPDecContext {
     AVClass       *class;
@@ -55,10 +54,9 @@ typedef struct RKMPPDecContext {
 
     AVPacket       last_pkt;
     int            eof;
+    int            draining;
     int            info_change;
     int            errinfo_cnt;
-    int            queue_cnt;
-    int            queue_size;
 
     int            deint;
     int            afbc;
