@@ -38,7 +38,8 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 
-#define H26X_HEADER_SIZE 1024
+#define H26X_HEADER_SIZE  1024
+#define H26X_ASYNC_FRAMES 4
 #define ALIGN_DOWN(a, b) ((a) & ~((b)-1))
 
 typedef struct MPPEncFrame {
@@ -70,7 +71,6 @@ typedef struct RKMPPEncContext {
     int                qp_min;
     int                qp_max_i;
     int                qp_min_i;
-    int                surfaces;
     int                profile;
     int                tier;
     int                level;
@@ -106,8 +106,6 @@ static const AVRational mpp_tb = { 1, 1000000 };
             { .i64 = -1 }, -1, 51, VE, "qp_max_i" }, \
     { "qp_min_i", "Set the min QP value for I frame", OFFSET(qp_min_i), AV_OPT_TYPE_INT, \
             { .i64 = -1 }, -1, 51, VE, "qp_min_i" }, \
-    { "surfaces", "Set the maximum surfaces to be used for encoding", OFFSET(surfaces), AV_OPT_TYPE_INT, \
-            { .i64 = 4 }, 1, 16, VE, "surfaces" },
 
 static const AVOption h264_options[] = {
     RKMPP_ENC_COMMON_OPTS
