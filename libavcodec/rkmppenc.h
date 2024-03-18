@@ -38,8 +38,9 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 
-#define H26X_HEADER_SIZE  1024
-#define H26X_ASYNC_FRAMES 4
+#define H26X_HEADER_SIZE   1024
+#define H26X_ASYNC_FRAMES  4
+#define MJPEG_ASYNC_FRAMES 8
 #define ALIGN_DOWN(a, b) ((a) & ~((b)-1))
 
 typedef struct MPPEncFrame {
@@ -64,6 +65,7 @@ typedef struct RKMPPEncContext {
     enum AVPixelFormat pix_fmt;
 
     MPPEncFrame       *frame_list;
+    int                async_frames;
 
     int                rc_mode;
     int                qp_init;
@@ -171,7 +173,17 @@ static const AVOption hevc_options[] = {
     { NULL }
 };
 
-static const enum AVPixelFormat rkmpp_enc_pix_fmts[] = {
+static const AVOption mjpeg_options[] = {
+    { "qp_init", "Set the initial QP/Q_Factor value", OFFSET(qp_init), AV_OPT_TYPE_INT, \
+            { .i64 = -1 }, -1, 99, VE, "qmin" }, \
+    { "qp_max", "Set the max QP/Q_Factor value", OFFSET(qp_max), AV_OPT_TYPE_INT, \
+            { .i64 = -1 }, -1, 99, VE, "qp_max" }, \
+    { "qp_min", "Set the min QP/Q_Factor value", OFFSET(qp_min), AV_OPT_TYPE_INT, \
+            { .i64 = -1 }, -1, 99, VE, "qp_min" }, \
+    { NULL }
+};
+
+static const enum AVPixelFormat rkmpp_enc_pix_fmts_h26x[] = {
     AV_PIX_FMT_GRAY8,
     AV_PIX_FMT_YUV420P,
     AV_PIX_FMT_YUV422P,
@@ -197,6 +209,31 @@ static const enum AVPixelFormat rkmpp_enc_pix_fmts[] = {
     AV_PIX_FMT_NONE,
 };
 
+static const enum AVPixelFormat rkmpp_enc_pix_fmts_mjpeg[] = {
+    AV_PIX_FMT_YUV420P,
+    AV_PIX_FMT_NV12,
+    AV_PIX_FMT_YUYV422,
+    AV_PIX_FMT_UYVY422,
+    AV_PIX_FMT_RGB444BE,
+    AV_PIX_FMT_BGR444BE,
+    AV_PIX_FMT_RGB555BE,
+    AV_PIX_FMT_BGR555BE,
+    AV_PIX_FMT_RGB565BE,
+    AV_PIX_FMT_BGR565BE,
+    AV_PIX_FMT_RGBA,
+    AV_PIX_FMT_RGB0,
+    AV_PIX_FMT_BGRA,
+    AV_PIX_FMT_BGR0,
+    AV_PIX_FMT_ARGB,
+    AV_PIX_FMT_0RGB,
+    AV_PIX_FMT_ABGR,
+    AV_PIX_FMT_0BGR,
+    AV_PIX_FMT_X2RGB10BE,
+    AV_PIX_FMT_X2BGR10BE,
+    AV_PIX_FMT_DRM_PRIME,
+    AV_PIX_FMT_NONE,
+};
+
 static const AVCodecHWConfigInternal *const rkmpp_enc_hw_configs[] = {
     HW_CONFIG_ENCODER_DEVICE(NONE,      RKMPP),
     HW_CONFIG_ENCODER_FRAMES(DRM_PRIME, RKMPP),
@@ -210,7 +247,7 @@ static const FFCodecDefault rkmpp_enc_defaults[] = {
     { NULL }
 };
 
-#define DEFINE_RKMPP_ENCODER(x, X) \
+#define DEFINE_RKMPP_ENCODER(x, X, xx) \
 static const AVClass x##_rkmpp_encoder_class = { \
     .class_name = #x "_rkmpp_encoder", \
     .item_name  = av_default_item_name, \
@@ -230,7 +267,7 @@ const FFCodec ff_##x##_rkmpp_encoder = { \
     .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE, \
     .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE | \
                       FF_CODEC_CAP_INIT_CLEANUP, \
-    .p.pix_fmts     = rkmpp_enc_pix_fmts, \
+    .p.pix_fmts     = rkmpp_enc_pix_fmts_##xx, \
     .hw_configs     = rkmpp_enc_hw_configs, \
     .defaults       = rkmpp_enc_defaults, \
     .p.wrapper_name = "rkmpp", \
