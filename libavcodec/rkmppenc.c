@@ -30,13 +30,14 @@
 static MppCodingType rkmpp_get_coding_type(AVCodecContext *avctx)
 {
     switch (avctx->codec_id) {
-    case AV_CODEC_ID_H264: return MPP_VIDEO_CodingAVC;
-    case AV_CODEC_ID_HEVC: return MPP_VIDEO_CodingHEVC;
-    default:               return MPP_VIDEO_CodingUnused;
+    case AV_CODEC_ID_H264:  return MPP_VIDEO_CodingAVC;
+    case AV_CODEC_ID_HEVC:  return MPP_VIDEO_CodingHEVC;
+    case AV_CODEC_ID_MJPEG: return MPP_VIDEO_CodingMJPEG;
+    default:                return MPP_VIDEO_CodingUnused;
     }
 }
 
-static MppFrameFormat rkmpp_get_mpp_fmt(enum AVPixelFormat pix_fmt)
+static MppFrameFormat rkmpp_get_mpp_fmt_h26x(enum AVPixelFormat pix_fmt)
 {
     switch (pix_fmt) {
     case AV_PIX_FMT_GRAY8:   return MPP_FMT_YUV400;
@@ -61,6 +62,33 @@ static MppFrameFormat rkmpp_get_mpp_fmt(enum AVPixelFormat pix_fmt)
     case AV_PIX_FMT_ABGR:
     case AV_PIX_FMT_0BGR:    return MPP_FMT_ABGR8888;
     default:                 return MPP_FMT_BUTT;
+    }
+}
+
+static MppFrameFormat rkmpp_get_mpp_fmt_mjpeg(enum AVPixelFormat pix_fmt)
+{
+    switch (pix_fmt) {
+    case AV_PIX_FMT_YUV420P:   return MPP_FMT_YUV420P;
+    case AV_PIX_FMT_NV12:      return MPP_FMT_YUV420SP;
+    case AV_PIX_FMT_YUYV422:   return MPP_FMT_YUV422_YUYV;
+    case AV_PIX_FMT_UYVY422:   return MPP_FMT_YUV422_UYVY;
+    case AV_PIX_FMT_RGB444BE:  return MPP_FMT_RGB444;
+    case AV_PIX_FMT_BGR444BE:  return MPP_FMT_BGR444;
+    case AV_PIX_FMT_RGB555BE:  return MPP_FMT_RGB555;
+    case AV_PIX_FMT_BGR555BE:  return MPP_FMT_BGR555;
+    case AV_PIX_FMT_RGB565BE:  return MPP_FMT_RGB565;
+    case AV_PIX_FMT_BGR565BE:  return MPP_FMT_BGR565;
+    case AV_PIX_FMT_RGBA:
+    case AV_PIX_FMT_RGB0:      return MPP_FMT_RGBA8888;
+    case AV_PIX_FMT_BGRA:
+    case AV_PIX_FMT_BGR0:      return MPP_FMT_BGRA8888;
+    case AV_PIX_FMT_ARGB:
+    case AV_PIX_FMT_0RGB:      return MPP_FMT_ARGB8888;
+    case AV_PIX_FMT_ABGR:
+    case AV_PIX_FMT_0BGR:      return MPP_FMT_ABGR8888;
+    case AV_PIX_FMT_X2RGB10BE: return MPP_FMT_RGB101010;
+    case AV_PIX_FMT_X2BGR10BE: return MPP_FMT_BGR101010;
+    default:                   return MPP_FMT_BUTT;
     }
 }
 
@@ -231,6 +259,13 @@ static int rkmpp_set_enc_cfg_prep(AVCodecContext *avctx, AVFrame *frame)
 
     pix_desc = av_pix_fmt_desc_get(r->pix_fmt);
     is_afbc = drm_is_afbc(drm_desc->objects[0].format_modifier);
+    if (is_afbc &&
+        !(avctx->codec_id == AV_CODEC_ID_H264 ||
+          avctx->codec_id == AV_CODEC_ID_HEVC)) {
+        av_log(avctx, AV_LOG_ERROR, "AFBC is not supported in codec '%s'\n",
+               avcodec_get_name(avctx->codec_id));
+        return AVERROR(ENOSYS);
+    }
     if (!is_afbc) {
         ret = get_byte_stride(&drm_desc->objects[0],
                               &drm_desc->layers[0],
@@ -317,7 +352,7 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
 
     mpp_enc_cfg_set_s32(cfg, "rc:gop", FFMAX(avctx->gop_size, 1));
 
-    rc_mode = r->rc_mode;
+    rc_mode = avctx->codec_id == AV_CODEC_ID_MJPEG ? MPP_ENC_RC_MODE_FIXQP : r->rc_mode;
     if (rc_mode == MPP_ENC_RC_MODE_BUTT) {
         if (r->qp_init >= 0)
             rc_mode = MPP_ENC_RC_MODE_FIXQP;
@@ -342,7 +377,6 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
     switch (rc_mode) {
     case MPP_ENC_RC_MODE_FIXQP:
         /* do not setup bitrate on FIXQP mode */
-        min_bps = max_bps = avctx->bit_rate;
         break;
     case MPP_ENC_RC_MODE_VBR:
     case MPP_ENC_RC_MODE_AVBR:
@@ -359,12 +393,15 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
         min_bps = avctx->bit_rate * 15 / 16;
         break;
     }
-    mpp_enc_cfg_set_u32(cfg, "rc:bps_target", avctx->bit_rate);
-    mpp_enc_cfg_set_s32(cfg, "rc:bps_max", max_bps);
-    mpp_enc_cfg_set_s32(cfg, "rc:bps_min", min_bps);
-
-    av_log(avctx, AV_LOG_VERBOSE, "Bitrate Target/Min/Max is set to %ld/%d/%d\n",
-           avctx->bit_rate, min_bps, max_bps);
+    if (rc_mode == MPP_ENC_RC_MODE_CBR ||
+        rc_mode == MPP_ENC_RC_MODE_VBR ||
+        rc_mode == MPP_ENC_RC_MODE_AVBR) {
+        mpp_enc_cfg_set_u32(cfg, "rc:bps_target", avctx->bit_rate);
+        mpp_enc_cfg_set_s32(cfg, "rc:bps_max", max_bps);
+        mpp_enc_cfg_set_s32(cfg, "rc:bps_min", min_bps);
+        av_log(avctx, AV_LOG_VERBOSE, "Bitrate Target/Min/Max is set to %ld/%d/%d\n",
+               avctx->bit_rate, min_bps, max_bps);
+    }
 
     if (avctx->rc_buffer_size > 0 &&
         (rc_mode == MPP_ENC_RC_MODE_CBR ||
@@ -407,6 +444,17 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
             mpp_enc_cfg_set_s32(cfg, "rc:qp_min", qp_min);
             mpp_enc_cfg_set_s32(cfg, "rc:qp_max_i",qp_max_i);
             mpp_enc_cfg_set_s32(cfg, "rc:qp_min_i", qp_min_i);
+        }
+        break;
+    case AV_CODEC_ID_MJPEG:
+        {
+            qp_init = r->qp_init >= 1 ? r->qp_init : 80;
+            qp_max = r->qp_max >= 1 ? r->qp_max : 99;
+            qp_min = r->qp_min >= 1 ? r->qp_min : 1;
+            /* jpeg use special codec config to control qtable */
+            mpp_enc_cfg_set_s32(cfg, "jpeg:q_factor", qp_init);
+            mpp_enc_cfg_set_s32(cfg, "jpeg:qf_max", qp_max);
+            mpp_enc_cfg_set_s32(cfg, "jpeg:qf_min", qp_min);
         }
         break;
     default:
@@ -464,6 +512,8 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
             av_log(avctx, AV_LOG_VERBOSE, "Level is set to %d\n", avctx->level / 3);
         }
         break;
+    case AV_CODEC_ID_MJPEG:
+        break;
     default:
         return AVERROR(EINVAL);
     }
@@ -473,15 +523,15 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
         return AVERROR_EXTERNAL;
     }
 
-    sei_mode = MPP_ENC_SEI_MODE_DISABLE;
-    if ((ret = r->mapi->control(r->mctx, MPP_ENC_SET_SEI_CFG, &sei_mode)) != MPP_OK) {
-        av_log(avctx, AV_LOG_ERROR, "Failed to set SEI config: %d\n", ret);
-        return AVERROR_EXTERNAL;
-    }
-
-    header_mode = MPP_ENC_HEADER_MODE_EACH_IDR;
     if (avctx->codec_id == AV_CODEC_ID_H264 ||
         avctx->codec_id == AV_CODEC_ID_HEVC) {
+        sei_mode = MPP_ENC_SEI_MODE_DISABLE;
+        if ((ret = r->mapi->control(r->mctx, MPP_ENC_SET_SEI_CFG, &sei_mode)) != MPP_OK) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to set SEI config: %d\n", ret);
+            return AVERROR_EXTERNAL;
+        }
+
+        header_mode = MPP_ENC_HEADER_MODE_EACH_IDR;
         if ((ret = r->mapi->control(r->mctx, MPP_ENC_SET_HEADER_MODE, &header_mode)) != MPP_OK) {
             av_log(avctx, AV_LOG_ERROR, "Failed to set header mode: %d\n", ret);
             return AVERROR_EXTERNAL;
@@ -572,6 +622,13 @@ static MPPEncFrame *rkmpp_submit_frame(AVCodecContext *avctx, AVFrame *frame)
     plane0 = &layer->planes[0];
 
     is_afbc = drm_is_afbc(drm_desc->objects[0].format_modifier);
+    if (is_afbc &&
+        !(avctx->codec_id == AV_CODEC_ID_H264 ||
+          avctx->codec_id == AV_CODEC_ID_HEVC)) {
+        av_log(avctx, AV_LOG_ERROR, "AFBC is not supported in codec '%s'\n",
+               avcodec_get_name(avctx->codec_id));
+        goto exit;
+    }
     if (is_afbc) {
         uint32_t drm_afbc_fmt = rkmpp_get_drm_afbc_format(mpp_fmt);
         int afbc_offset_y = 0;
@@ -654,7 +711,9 @@ static int rkmpp_send_frame(AVCodecContext *avctx, MPPEncFrame *mpp_enc_frame)
     if (frame && (ret = rkmpp_set_enc_cfg_prep(avctx, frame)) < 0)
         goto exit;
 
-    if (frame && frame->pict_type == AV_PICTURE_TYPE_I) {
+    if ((avctx->codec_id == AV_CODEC_ID_H264 ||
+         avctx->codec_id == AV_CODEC_ID_HEVC) &&
+         frame && frame->pict_type == AV_PICTURE_TYPE_I) {
         if ((ret = r->mapi->control(r->mctx, MPP_ENC_SET_IDR_FRAME, NULL)) != MPP_OK) {
             av_log(avctx, AV_LOG_ERROR, "Failed to set IDR frame: %d\n", ret);
             ret = AVERROR_EXTERNAL;
@@ -765,10 +824,13 @@ static int rkmpp_encode_frame(AVCodecContext *avctx, AVPacket *packet,
     RKMPPEncContext *r = avctx->priv_data;
     MPPEncFrame *mpp_enc_frame = NULL;
     int ret;
-    int timeout = (avctx->flags & AV_CODEC_FLAG_LOW_DELAY)
-                  ? MPP_TIMEOUT_BLOCK : MPP_TIMEOUT_NON_BLOCK;
+    int timeout = (avctx->codec_id == AV_CODEC_ID_H264 ||
+                   avctx->codec_id == AV_CODEC_ID_HEVC ||
+                   avctx->codec_id == AV_CODEC_ID_MJPEG) &&
+                   !(avctx->flags & AV_CODEC_FLAG_LOW_DELAY)
+                   ? MPP_TIMEOUT_NON_BLOCK : MPP_TIMEOUT_BLOCK;
 
-    if (get_used_frame_count(r->frame_list) > H26X_ASYNC_FRAMES)
+    if (get_used_frame_count(r->frame_list) > r->async_frames)
         goto get;
 
     mpp_enc_frame = rkmpp_submit_frame(avctx, (AVFrame *)frame);
@@ -804,6 +866,7 @@ static int rkmpp_encode_close(AVCodecContext *avctx)
     RKMPPEncContext *r = avctx->priv_data;
 
     r->cfg_init = 0;
+    r->async_frames = 0;
 
     if (r->mapi) {
         r->mapi->reset(r->mctx);
@@ -859,13 +922,18 @@ static int rkmpp_encode_init(AVCodecContext *avctx)
     int output_timeout = MPP_TIMEOUT_NON_BLOCK;
     int ret;
 
+    r->cfg_init = 0;
+    r->async_frames = 0;
+
     if ((coding_type = rkmpp_get_coding_type(avctx)) == MPP_VIDEO_CodingUnused) {
         av_log(avctx, AV_LOG_ERROR, "Unknown codec id: %d\n", avctx->codec_id);
         return AVERROR(ENOSYS);
     }
 
     pix_fmt = avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME ? avctx->sw_pix_fmt : avctx->pix_fmt;
-    mpp_fmt = rkmpp_get_mpp_fmt(pix_fmt) & MPP_FRAME_FMT_MASK;
+    mpp_fmt = avctx->codec_id == AV_CODEC_ID_MJPEG
+              ? rkmpp_get_mpp_fmt_mjpeg(pix_fmt) : rkmpp_get_mpp_fmt_h26x(pix_fmt);
+    mpp_fmt &= MPP_FRAME_FMT_MASK;
 
     if (mpp_fmt == MPP_FMT_BUTT) {
         av_log(avctx, AV_LOG_ERROR, "Unsupported input pixel format '%s'\n",
@@ -921,6 +989,12 @@ static int rkmpp_encode_init(AVCodecContext *avctx)
         goto fail;
 
     if (avctx->codec_id == AV_CODEC_ID_H264 ||
+        avctx->codec_id == AV_CODEC_ID_HEVC)
+        r->async_frames = H26X_ASYNC_FRAMES;
+    else if (avctx->codec_id == AV_CODEC_ID_MJPEG)
+        r->async_frames = MJPEG_ASYNC_FRAMES;
+
+    if (avctx->codec_id == AV_CODEC_ID_H264 ||
         avctx->codec_id == AV_CODEC_ID_HEVC) {
         RK_U8 enc_hdr_buf[H26X_HEADER_SIZE];
         size_t pkt_len = 0;
@@ -929,7 +1003,7 @@ static int rkmpp_encode_init(AVCodecContext *avctx)
         memset(enc_hdr_buf, 0, H26X_HEADER_SIZE);
 
         if ((ret = mpp_packet_init(&mpp_pkt,
-	                           (void *)enc_hdr_buf,
+                                   (void *)enc_hdr_buf,
                                    H26X_HEADER_SIZE)) != MPP_OK || !mpp_pkt) {
             av_log(avctx, AV_LOG_ERROR, "Failed to init extra info packet: %d\n", ret);
             ret = AVERROR_EXTERNAL;
@@ -1006,8 +1080,11 @@ fail:
 }
 
 #if CONFIG_H264_RKMPP_ENCODER
-DEFINE_RKMPP_ENCODER(h264, H264)
+DEFINE_RKMPP_ENCODER(h264, H264, h26x)
 #endif
 #if CONFIG_HEVC_RKMPP_ENCODER
-DEFINE_RKMPP_ENCODER(hevc, HEVC)
+DEFINE_RKMPP_ENCODER(hevc, HEVC, h26x)
+#endif
+#if CONFIG_MJPEG_RKMPP_ENCODER
+DEFINE_RKMPP_ENCODER(mjpeg, MJPEG, mjpeg)
 #endif
