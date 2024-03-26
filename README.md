@@ -40,6 +40,7 @@ The documentation is available on the [Wiki](https://github.com/nyanmisaka/ffmpe
 ```
  V..... h264_rkmpp           Rockchip MPP (Media Process Platform) H264 encoder (codec h264)
  V..... hevc_rkmpp           Rockchip MPP (Media Process Platform) HEVC encoder (codec hevc)
+ V..... mjpeg_rkmpp          Rockchip MPP (Media Process Platform) MJPEG encoder (codec mjpeg)
 ```
 
 ### Filters
@@ -80,7 +81,7 @@ The documentation is available on the [Wiki](https://github.com/nyanmisaka/ffmpe
 ```
 
 ## Todo
-* Support MPP MJPEG/JPEG decoder and encoder
+* Support MPP MJPEG/JPEG decoder
 * Support MPP VP8 video encoder
 * ...
 
