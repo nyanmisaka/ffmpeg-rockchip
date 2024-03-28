@@ -550,7 +550,10 @@ static MPPEncFrame *rkmpp_submit_frame(AVCodecContext *avctx, AVFrame *frame)
     const AVDRMFrameDescriptor *drm_desc;
     const AVDRMLayerDescriptor *layer;
     const AVDRMPlaneDescriptor *plane0;
-    const AVPixFmtDescriptor *pix_desc;
+    const AVPixFmtDescriptor *pix_desc = av_pix_fmt_desc_get(r->pix_fmt);
+    const int is_planar = pix_desc->flags & AV_PIX_FMT_FLAG_PLANAR;
+    const int is_rgb = pix_desc->flags & AV_PIX_FMT_FLAG_RGB;
+    const int is_yuv = !is_rgb && pix_desc->nb_components >= 2;
     int hor_stride = 0, ver_stride = 0;
     MppBufferInfo buf_info = { 0 };
     MppFrameFormat mpp_fmt = r->mpp_fmt;
@@ -603,9 +606,19 @@ static MPPEncFrame *rkmpp_submit_frame(AVCodecContext *avctx, AVFrame *frame)
     if (drm_desc->objects[0].fd < 0)
         goto exit;
 
+    /* planar YUV quirks */
     if ((r->pix_fmt == AV_PIX_FMT_YUV420P ||
-         r->pix_fmt == AV_PIX_FMT_YUV422P) && (drm_frame->width % 2)) {
-        av_log(avctx, AV_LOG_ERROR, "Unsupported width %d, not 2-aligned\n", drm_frame->width);
+         r->pix_fmt == AV_PIX_FMT_YUV422P ||
+         r->pix_fmt == AV_PIX_FMT_NV24) && (drm_frame->width % 2)) {
+        av_log(avctx, AV_LOG_ERROR, "Unsupported width '%d', not 2-aligned\n",
+               drm_frame->width);
+        goto exit;
+    }
+    /* packed RGB/YUV quirks */
+    if ((is_rgb || (is_yuv && !is_planar)) &&
+        (drm_frame->width % 2 || drm_frame->height % 2)) {
+        av_log(avctx, AV_LOG_ERROR, "Unsupported size '%dx%d', not 2-aligned\n",
+               drm_frame->width, drm_frame->height);
         goto exit;
     }
 
@@ -647,7 +660,6 @@ static MPPEncFrame *rkmpp_submit_frame(AVCodecContext *avctx, AVFrame *frame)
     }
     mpp_frame_set_fmt(mpp_frame, mpp_fmt);
 
-    pix_desc = av_pix_fmt_desc_get(r->pix_fmt);
     if (is_afbc) {
         hor_stride = plane0->pitch;
         if ((ret = get_afbc_byte_stride(pix_desc, &hor_stride, 1)) < 0)
