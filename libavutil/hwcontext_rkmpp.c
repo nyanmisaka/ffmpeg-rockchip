@@ -42,25 +42,25 @@ static const struct {
     uint32_t drm_format;
 } supported_formats[] = {
     /* grayscale */
-    { AV_PIX_FMT_GRAY8,    DRM_FORMAT_R8        },
-    /* planar YUV */
-    { AV_PIX_FMT_YUV420P,  DRM_FORMAT_YUV420,   },
-    { AV_PIX_FMT_YUV422P,  DRM_FORMAT_YUV422,   },
-    { AV_PIX_FMT_YUV444P,  DRM_FORMAT_YUV444,   },
+    { AV_PIX_FMT_GRAY8,     DRM_FORMAT_R8        },
+    /* fully-planar YUV */
+    { AV_PIX_FMT_YUV420P,   DRM_FORMAT_YUV420,   },
+    { AV_PIX_FMT_YUV422P,   DRM_FORMAT_YUV422,   },
+    { AV_PIX_FMT_YUV444P,   DRM_FORMAT_YUV444,   },
     /* semi-planar YUV */
-    { AV_PIX_FMT_NV12,     DRM_FORMAT_NV12,     },
-    { AV_PIX_FMT_NV21,     DRM_FORMAT_NV21,     },
-    { AV_PIX_FMT_NV16,     DRM_FORMAT_NV16,     },
-    { AV_PIX_FMT_NV24,     DRM_FORMAT_NV24,     },
+    { AV_PIX_FMT_NV12,      DRM_FORMAT_NV12,     },
+    { AV_PIX_FMT_NV21,      DRM_FORMAT_NV21,     },
+    { AV_PIX_FMT_NV16,      DRM_FORMAT_NV16,     },
+    { AV_PIX_FMT_NV24,      DRM_FORMAT_NV24,     },
     /* semi-planar YUV 10-bit */
-    { AV_PIX_FMT_P010,     DRM_FORMAT_P010,     },
-    { AV_PIX_FMT_P210,     DRM_FORMAT_P210,     },
-    { AV_PIX_FMT_NV15,     DRM_FORMAT_NV15,     },
-    { AV_PIX_FMT_NV20,     DRM_FORMAT_NV20,     },
+    { AV_PIX_FMT_P010,      DRM_FORMAT_P010,     },
+    { AV_PIX_FMT_P210,      DRM_FORMAT_P210,     },
+    { AV_PIX_FMT_NV15,      DRM_FORMAT_NV15,     },
+    { AV_PIX_FMT_NV20,      DRM_FORMAT_NV20,     },
     /* packed YUV */
-    { AV_PIX_FMT_YUYV422,  DRM_FORMAT_YUYV,     },
-    { AV_PIX_FMT_YVYU422,  DRM_FORMAT_YVYU,     },
-    { AV_PIX_FMT_UYVY422,  DRM_FORMAT_UYVY,     },
+    { AV_PIX_FMT_YUYV422,   DRM_FORMAT_YUYV,     },
+    { AV_PIX_FMT_YVYU422,   DRM_FORMAT_YVYU,     },
+    { AV_PIX_FMT_UYVY422,   DRM_FORMAT_UYVY,     },
     /* packed RGB */
     { AV_PIX_FMT_RGB444LE,  DRM_FORMAT_XRGB4444, },
     { AV_PIX_FMT_RGB444BE,  DRM_FORMAT_XRGB4444    | DRM_FORMAT_BIG_ENDIAN, },
@@ -162,8 +162,11 @@ static int rkmpp_get_aligned_linesize(enum AVPixelFormat pix_fmt, int width, int
 {
     const AVPixFmtDescriptor *pixdesc = av_pix_fmt_desc_get(pix_fmt);
     const int is_rgb = pixdesc->flags & AV_PIX_FMT_FLAG_RGB;
+    const int is_yuv = !is_rgb && pixdesc->nb_components >= 2;
     const int is_planar = pixdesc->flags & AV_PIX_FMT_FLAG_PLANAR;
     const int is_packed_fmt = is_rgb || (!is_rgb && !is_planar);
+    const int is_fully_planar = is_planar &&
+                                pixdesc->comp[1].plane != pixdesc->comp[2].plane;
     int linesize;
 
     if (pix_fmt == AV_PIX_FMT_NV15 ||
@@ -178,6 +181,8 @@ static int rkmpp_get_aligned_linesize(enum AVPixelFormat pix_fmt, int width, int
     if (is_packed_fmt) {
         const int pixel_width = av_get_padded_bits_per_pixel(pixdesc) / 8;
         linesize = FFALIGN(linesize / pixel_width, 8) * pixel_width;
+    } else if (is_yuv && is_fully_planar) {
+        linesize = FFALIGN(linesize, 16);
     } else
         linesize = FFALIGN(linesize, 64);
 
@@ -242,7 +247,7 @@ static AVBufferRef *rkmpp_drm_pool_alloc(void *opaque, size_t size)
         layer->planes[i].object_index = 0;
         layer->planes[i].offset =
             layer->planes[i-1].offset +
-            layer->planes[i-1].pitch * (hwfc->height >> (i > 1 ? pixdesc->log2_chroma_h : 0));
+            layer->planes[i-1].pitch * (FFALIGN(hwfc->height, 2) >> (i > 1 ? pixdesc->log2_chroma_h : 0));
         layer->planes[i].pitch =
             rkmpp_get_aligned_linesize(hwfc->sw_format, hwfc->width, i);
     }
