@@ -451,6 +451,7 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
             qp_init = r->qp_init >= 1 ? r->qp_init : 80;
             qp_max = r->qp_max >= 1 ? r->qp_max : 99;
             qp_min = r->qp_min >= 1 ? r->qp_min : 1;
+            qp_max_i = qp_min_i = 0;
             /* jpeg use special codec config to control qtable */
             mpp_enc_cfg_set_s32(cfg, "jpeg:q_factor", qp_init);
             mpp_enc_cfg_set_s32(cfg, "jpeg:qf_max", qp_max);
