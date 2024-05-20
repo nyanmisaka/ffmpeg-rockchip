@@ -221,6 +221,61 @@ static int nv24ToPlanarWrapper(SwsContext *c, const uint8_t *src[],
     return srcSliceH;
 }
 
+static int nv15_20ToPlanarWrapper(SwsContext *c, const uint8_t *src[],
+                                  int srcStride[], int srcSliceY,
+                                  int srcSliceH, uint8_t *dstParam[],
+                                  int dstStride[])
+{
+    const AVPixFmtDescriptor *src_format = av_pix_fmt_desc_get(c->srcFormat);
+    const AVPixFmtDescriptor *dst_format = av_pix_fmt_desc_get(c->dstFormat);
+    int vsub = 1 << dst_format->log2_chroma_h;
+    uint16_t *dstY = (uint16_t*)(dstParam[0] + dstStride[0] * srcSliceY);
+    uint16_t *dstU = (uint16_t*)(dstParam[1] + dstStride[1] * srcSliceY / vsub);
+    uint16_t *dstV = (uint16_t*)(dstParam[2] + dstStride[2] * srcSliceY / vsub);
+    int x, y;
+
+    /* Calculate net shift required for values. */
+    const int shift[3] = {
+        dst_format->comp[0].depth + dst_format->comp[0].shift -
+        src_format->comp[0].depth - src_format->comp[0].shift,
+        dst_format->comp[1].depth + dst_format->comp[1].shift -
+        src_format->comp[1].depth - src_format->comp[1].shift,
+        dst_format->comp[2].depth + dst_format->comp[2].shift -
+        src_format->comp[2].depth - src_format->comp[2].shift,
+    };
+
+    for (y = srcSliceH; y > 0; y--) {
+        const uint8_t *tsrcY = src[0];
+        uint16_t *tdstY = dstY;
+        for (x = c->srcW / 4; x > 0; x--) {
+            *tdstY++ = (((tsrcY[1] & 0x3 ) << 8) | (tsrcY[0]        & 0xFF)) << shift[0];
+            *tdstY++ = (((tsrcY[2] & 0xF ) << 6) | ((tsrcY[1] >> 2) & 0x3F)) << shift[0];
+            *tdstY++ = (((tsrcY[3] & 0x3F) << 4) | ((tsrcY[2] >> 4) & 0xF )) << shift[0];
+            *tdstY++ = (((tsrcY[4] & 0xFF) << 2) | ((tsrcY[3] >> 6) & 0x3 )) << shift[0];
+            tsrcY += 5;
+        }
+        src[0] += srcStride[0];
+        dstY += dstStride[0] / sizeof(uint16_t);
+    }
+
+    for (y = srcSliceH / vsub; y > 0; y--) {
+        const uint8_t *tsrcUV = src[1];
+        uint16_t *tdstU = dstU, *tdstV = dstV;
+        for (x = c->chrSrcW / 2; x > 0; x--) {
+            *tdstU++ = (((tsrcUV[1] & 0x3 ) << 8) | (tsrcUV[0]        & 0xFF)) << shift[1];
+            *tdstV++ = (((tsrcUV[2] & 0xf ) << 6) | ((tsrcUV[1] >> 2) & 0x3F)) << shift[2];
+            *tdstU++ = (((tsrcUV[3] & 0x3F) << 4) | ((tsrcUV[2] >> 4) & 0xF )) << shift[1];
+            *tdstV++ = (((tsrcUV[4] & 0xFF) << 2) | ((tsrcUV[3] >> 6) & 0x3 )) << shift[2];
+            tsrcUV += 5;
+        }
+        src[1] += srcStride[1];
+        dstU += dstStride[1] / sizeof(uint16_t);
+        dstV += dstStride[2] / sizeof(uint16_t);
+    }
+
+    return srcSliceH;
+}
+
 static int planarToP01xWrapper(SwsContext *c, const uint8_t *src8[],
                                int srcStride[], int srcSliceY,
                                int srcSliceH, uint8_t *dstParam8[],
@@ -2003,6 +2058,19 @@ void ff_get_unscaled_swscale(SwsContext *c)
     if (dstFormat == AV_PIX_FMT_YUV444P &&
         (srcFormat == AV_PIX_FMT_NV24 || srcFormat == AV_PIX_FMT_NV42)) {
         c->convert_unscaled = nv24ToPlanarWrapper;
+    }
+    /* nv15_to_yuv420p1x & nv20_to_yuv422p1x */
+    if ((srcFormat == AV_PIX_FMT_NV15 &&
+         (dstFormat == AV_PIX_FMT_YUV420P10 ||
+          dstFormat == AV_PIX_FMT_YUV420P12 ||
+          dstFormat == AV_PIX_FMT_YUV420P14 ||
+          dstFormat == AV_PIX_FMT_YUV420P16)) ||
+        (srcFormat == AV_PIX_FMT_NV20 &&
+         (dstFormat == AV_PIX_FMT_YUV422P10 ||
+          dstFormat == AV_PIX_FMT_YUV422P12 ||
+          dstFormat == AV_PIX_FMT_YUV422P14 ||
+          dstFormat == AV_PIX_FMT_YUV422P16))) {
+        c->convert_unscaled = nv15_20ToPlanarWrapper;
     }
     /* yuv2bgr */
     if ((srcFormat == AV_PIX_FMT_YUV420P || srcFormat == AV_PIX_FMT_YUV422P ||
