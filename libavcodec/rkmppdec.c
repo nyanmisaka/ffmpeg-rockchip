@@ -46,6 +46,7 @@ static MppCodingType rkmpp_get_coding_type(AVCodecContext *avctx)
     case AV_CODEC_ID_MPEG1VIDEO:    /* fallthrough */
     case AV_CODEC_ID_MPEG2VIDEO:    return MPP_VIDEO_CodingMPEG2;
     case AV_CODEC_ID_MPEG4:         return MPP_VIDEO_CodingMPEG4;
+    case AV_CODEC_ID_MJPEG:         return MPP_VIDEO_CodingMJPEG;
     default:                        return MPP_VIDEO_CodingUnused;
     }
 }
@@ -962,4 +963,7 @@ DEFINE_RKMPP_DECODER(mpeg2, MPEG2VIDEO, NULL)
 #endif
 #if CONFIG_MPEG4_RKMPP_DECODER
 DEFINE_RKMPP_DECODER(mpeg4, MPEG4, "mpeg4_unpack_bframes")
+#endif
+#if CONFIG_MJPEG_RKMPP_DECODER
+DEFINE_RKMPP_DECODER(mjpeg, MJPEG, NULL)
 #endif
