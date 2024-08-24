@@ -879,6 +879,7 @@ extern const FFCodec ff_mjpeg_cuvid_decoder;
 extern const FFCodec ff_mjpeg_qsv_encoder;
 extern const FFCodec ff_mjpeg_qsv_decoder;
 extern const FFCodec ff_mjpeg_rkmpp_encoder;
+extern const FFCodec ff_mjpeg_rkmpp_decoder;
 extern const FFCodec ff_mjpeg_vaapi_encoder;
 extern const FFCodec ff_mp3_mf_encoder;
 extern const FFCodec ff_mpeg1_cuvid_decoder;
