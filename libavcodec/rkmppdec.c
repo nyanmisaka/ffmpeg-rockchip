@@ -115,6 +115,7 @@ static av_cold int rkmpp_decode_close(AVCodecContext *avctx)
     r->draining = 0;
     r->info_change = 0;
     r->errinfo_cnt = 0;
+    r->got_frame = 0;
 
     if (r->mapi) {
         r->mapi->reset(r->mctx);
@@ -211,6 +212,9 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
         ret = AVERROR_EXTERNAL;
         goto fail;
     }
+
+    if (avctx->skip_frame == AVDISCARD_NONKEY)
+        r->deint = 0;
 
     if ((ret = r->mapi->control(r->mctx, MPP_DEC_SET_ENABLE_DEINTERLACE, &r->deint)) != MPP_OK) {
         av_log(avctx, AV_LOG_ERROR, "Failed to set enable deinterlace: %d\n", ret);
@@ -751,6 +755,7 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
     } else {
         av_log(avctx, AV_LOG_DEBUG, "Received a frame\n");
         r->errinfo_cnt = 0;
+        r->got_frame = 1;
 
         switch (avctx->pix_fmt) {
         case AV_PIX_FMT_DRM_PRIME:
@@ -839,6 +844,15 @@ static int rkmpp_send_packet(AVCodecContext *avctx, AVPacket *pkt)
     /* avoid sending new data after EOS */
     if (r->draining)
         return AVERROR(EOF);
+
+    /* do not skip non-key pkt until got any frame */
+    if (r->got_frame &&
+        avctx->skip_frame == AVDISCARD_NONKEY &&
+        !(pkt->flags & AV_PKT_FLAG_KEY)) {
+        av_log(avctx, AV_LOG_TRACE, "Skip packet without key flag "
+               "at pts %"PRId64"\n", pkt->pts);
+        return 0;
+    }
 
     if ((ret = mpp_packet_init(&mpp_pkt, pkt->data, pkt->size)) != MPP_OK) {
         av_log(avctx, AV_LOG_ERROR, "Failed to init packet: %d\n", ret);
@@ -930,6 +944,7 @@ static void rkmpp_decode_flush(AVCodecContext *avctx)
         r->draining = 0;
         r->info_change = 0;
         r->errinfo_cnt = 0;
+        r->got_frame = 0;
 
         av_packet_unref(&r->last_pkt);
     } else
