@@ -57,6 +57,7 @@ typedef struct RKMPPDecContext {
     int            draining;
     int            info_change;
     int            errinfo_cnt;
+    int            got_frame;
 
     int            deint;
     int            afbc;
