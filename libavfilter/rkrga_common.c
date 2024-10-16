@@ -42,6 +42,9 @@ typedef struct RGAFormatMap {
     enum _Rga_SURF_FORMAT rga_fmt;
 } RGAFormatMap;
 
+#define RK_FORMAT_YCbCr_444_SP (0x32 << 8)
+#define RK_FORMAT_YCrCb_444_SP (0x33 << 8)
+
 #define YUV_FORMATS \
     { AV_PIX_FMT_GRAY8,    RK_FORMAT_YCbCr_400 },        /* RGA2 only */ \
     { AV_PIX_FMT_YUV420P,  RK_FORMAT_YCbCr_420_P },      /* RGA2 only */ \
@@ -49,6 +52,8 @@ typedef struct RGAFormatMap {
     { AV_PIX_FMT_NV12,     RK_FORMAT_YCbCr_420_SP }, \
     { AV_PIX_FMT_NV21,     RK_FORMAT_YCrCb_420_SP }, \
     { AV_PIX_FMT_NV16,     RK_FORMAT_YCbCr_422_SP }, \
+    { AV_PIX_FMT_NV24,     RK_FORMAT_YCbCr_444_SP },     /* RGA2-Pro only */ \
+    { AV_PIX_FMT_NV42,     RK_FORMAT_YCrCb_444_SP },     /* RGA2-Pro only */ \
     { AV_PIX_FMT_P010,     RK_FORMAT_YCbCr_420_SP_10B }, /* RGA3 only */ \
     { AV_PIX_FMT_P210,     RK_FORMAT_YCbCr_422_SP_10B }, /* RGA3 only */ \
     { AV_PIX_FMT_NV15,     RK_FORMAT_YCbCr_420_SP_10B }, /* RGA2 only input, aka P010 compact */ \
@@ -154,6 +159,7 @@ static uint32_t get_drm_afbc_format(enum AVPixelFormat pix_fmt)
     case AV_PIX_FMT_NV15:     return DRM_FORMAT_YUV420_10BIT;
     case AV_PIX_FMT_NV16:     return DRM_FORMAT_YUYV;
     case AV_PIX_FMT_NV20:     return DRM_FORMAT_Y210;
+    case AV_PIX_FMT_NV24:     return DRM_FORMAT_VUY888;
     case AV_PIX_FMT_RGB565LE: return DRM_FORMAT_RGB565;
     case AV_PIX_FMT_BGR565LE: return DRM_FORMAT_BGR565;
     case AV_PIX_FMT_RGB24:    return DRM_FORMAT_RGB888;
@@ -162,6 +168,18 @@ static uint32_t get_drm_afbc_format(enum AVPixelFormat pix_fmt)
     case AV_PIX_FMT_RGB0:     return DRM_FORMAT_XBGR8888;
     case AV_PIX_FMT_BGRA:     return DRM_FORMAT_ARGB8888;
     case AV_PIX_FMT_BGR0:     return DRM_FORMAT_XRGB8888;
+    default:                  return DRM_FORMAT_INVALID;
+    }
+}
+
+static uint32_t get_drm_rfbc_format(enum AVPixelFormat pix_fmt)
+{
+    switch (pix_fmt) {
+    case AV_PIX_FMT_NV12:     return DRM_FORMAT_YUV420_8BIT;
+    case AV_PIX_FMT_NV15:     return DRM_FORMAT_YUV420_10BIT;
+    case AV_PIX_FMT_NV16:     return DRM_FORMAT_YUYV;
+    case AV_PIX_FMT_NV20:     return DRM_FORMAT_Y210;
+    case AV_PIX_FMT_NV24:     return DRM_FORMAT_VUY888;
     default:                  return DRM_FORMAT_INVALID;
     }
 }
@@ -339,14 +357,24 @@ static int verify_rga_frame_info_io_dynamic(AVFilterContext *avctx,
                av_get_pix_fmt_name(out->pix_fmt));
         return AVERROR(ENOSYS);
     }
-    if (r->is_rga2_used && in->crop && in->pix_desc->comp[0].depth >= 10) {
-        av_log(avctx, AV_LOG_ERROR, "Cropping 10-bit '%s' input is not supported if RGA2 is requested\n",
+    if (!r->has_rga2p && r->is_rga2_used && in->crop && in->pix_desc->comp[0].depth >= 10) {
+        av_log(avctx, AV_LOG_ERROR, "Cropping 10-bit '%s' input is not supported if RGA2 (non-Pro) is requested\n",
                av_get_pix_fmt_name(in->pix_fmt));
         return AVERROR(ENOSYS);
     }
-    if (r->is_rga2_used &&
+    if (r->is_rga2_used && !r->has_rga2p &&
         (out->act_w > 4096 || out->act_h > 4096)) {
-        av_log(avctx, AV_LOG_ERROR, "Max supported output size of RGA2 is 4096x4096\n");
+        av_log(avctx, AV_LOG_ERROR, "Max supported output size of RGA2 (non-Pro) is 4096x4096\n");
+        return AVERROR(EINVAL);
+    }
+    if (!r->is_rga2_used &&
+        (in->act_w < 68 || in->act_h < 2)) {
+        av_log(avctx, AV_LOG_ERROR, "Min supported input size of RGA3 is 68x2\n");
+        return AVERROR(EINVAL);
+    }
+    if (!r->is_rga2_used &&
+        (out->act_w > 8128 || out->act_h > 8128)) {
+        av_log(avctx, AV_LOG_ERROR, "Max supported output size of RGA3 is 8128x8128\n");
         return AVERROR(EINVAL);
     }
 
@@ -367,7 +395,8 @@ static RGAFrame *submit_frame(RKRGAContext *r, AVFilterLink *inlink,
     const AVDRMLayerDescriptor *layer;
     const AVDRMPlaneDescriptor *plane0;
     RGAFrame **frame_list = NULL;
-    int ret, is_afbc = 0;
+    int is_afbc = 0, is_rfbc = 0;
+    int ret, is_fbc = 0;
 
     if (pat_preproc && !nb_link)
         return NULL;
@@ -392,7 +421,9 @@ static RGAFrame *submit_frame(RKRGAContext *r, AVFilterLink *inlink,
         return NULL;
 
     is_afbc = drm_is_afbc(desc->objects[0].format_modifier);
-    if (!is_afbc) {
+    is_rfbc = drm_is_rfbc(desc->objects[0].format_modifier);
+    is_fbc = is_afbc || is_rfbc;
+    if (!is_fbc) {
         ret = get_pixel_stride(&desc->objects[0],
                                &desc->layers[0],
                                (in_info->pix_desc->flags & AV_PIX_FMT_FLAG_RGB),
@@ -417,8 +448,8 @@ static RGAFrame *submit_frame(RKRGAContext *r, AVFilterLink *inlink,
         info.blend    = (do_overlay && !pat_preproc) ? in_info->blend_mode : 0;
     }
 
-    if (is_afbc && (r->is_rga2_used || out_info->scheduler_core == 0x4)) {
-        av_log(ctx, AV_LOG_ERROR, "Input format '%s' with AFBC modifier is not supported by RGA2\n",
+    if (is_fbc && !r->has_rga2p && (r->is_rga2_used || out_info->scheduler_core == 0x4)) {
+        av_log(ctx, AV_LOG_ERROR, "Input format '%s' with AFBC modifier is not supported by RGA2 (non-Pro)\n",
                av_get_pix_fmt_name(in_info->pix_fmt));
         return NULL;
     }
@@ -450,33 +481,40 @@ static RGAFrame *submit_frame(RKRGAContext *r, AVFilterLink *inlink,
                      in_info->act_w, in_info->act_h,
                      w_stride, h_stride, in_info->rga_fmt);
 
-    if (is_afbc) {
+    if (is_fbc) {
         int afbc_offset_y = 0;
-        uint32_t drm_afbc_fmt = get_drm_afbc_format(in_info->pix_fmt);
+        int fbc_align_w =
+            is_afbc ? RK_RGA_AFBC_16x16_STRIDE_ALIGN : RK_RGA_RFBC_64x4_STRIDE_ALIGN_W;
+        int fbc_align_h =
+            is_afbc ? RK_RGA_AFBC_16x16_STRIDE_ALIGN : RK_RGA_RFBC_64x4_STRIDE_ALIGN_H;
+        uint32_t drm_fbc_fmt =
+            is_afbc ? get_drm_afbc_format(in_info->pix_fmt) : get_drm_rfbc_format(in_info->pix_fmt);
 
         if (rga_frame->frame->crop_top > 0) {
-            afbc_offset_y = rga_frame->frame->crop_top;
+            afbc_offset_y = is_afbc ? rga_frame->frame->crop_top : 0;
             info.rect.yoffset += afbc_offset_y;
         }
 
         layer = &desc->layers[0];
         plane0 = &layer->planes[0];
-        if (drm_afbc_fmt == layer->format) {
+        if (drm_fbc_fmt == layer->format) {
             info.rect.wstride = plane0->pitch;
             if ((ret = get_afbc_pixel_stride(in_info->bytes_pp, &info.rect.wstride, 1)) < 0)
                 return NULL;
 
-            if (info.rect.wstride % RK_RGA_AFBC_STRIDE_ALIGN)
-                info.rect.wstride = FFALIGN(inlink->w, RK_RGA_AFBC_STRIDE_ALIGN);
+            if (info.rect.wstride % fbc_align_w)
+                info.rect.wstride = FFALIGN(inlink->w, fbc_align_w);
 
-            info.rect.hstride = FFALIGN(inlink->h + afbc_offset_y, RK_RGA_AFBC_STRIDE_ALIGN);
+            info.rect.hstride = FFALIGN(inlink->h + afbc_offset_y, fbc_align_h);
         } else {
-            av_log(ctx, AV_LOG_ERROR, "Input format '%s' with AFBC modifier is not supported\n",
+            av_log(ctx, AV_LOG_ERROR, "Input format '%s' with AFBC/RFBC modifier is not supported\n",
                    av_get_pix_fmt_name(in_info->pix_fmt));
             return NULL;
         }
 
-        info.rd_mode = 1 << 1; /* IM_FBC_MODE */
+        info.rd_mode =
+            is_afbc ? (1 << 1)  /* IM_AFBC16x16_MODE */
+                    : (1 << 4); /* IM_RKFBC64x4_MODE */
     }
 
     rga_frame->info = info;
@@ -532,8 +570,8 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
         goto fail;
 
     if (r->is_rga2_used || out_info->scheduler_core == 0x4) {
-        if (pat_preproc && (info.rect.width > 4096 || info.rect.height > 4096)) {
-            av_log(ctx, AV_LOG_ERROR, "Max supported output size of RGA2 is 4096x4096\n");
+        if (!r->has_rga2p && pat_preproc && (info.rect.width > 4096 || info.rect.height > 4096)) {
+            av_log(ctx, AV_LOG_ERROR, "Max supported output size of RGA2 (non-Pro) is 4096x4096\n");
             goto fail;
         }
         if (r->afbc_out && !pat_preproc) {
@@ -587,8 +625,8 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
             goto exit;
         }
 
-        w_stride = FFALIGN(pat_preproc ? inlink->w : outlink->w, RK_RGA_AFBC_STRIDE_ALIGN);
-        h_stride = FFALIGN(pat_preproc ? inlink->h : outlink->h, RK_RGA_AFBC_STRIDE_ALIGN);
+        w_stride = FFALIGN(pat_preproc ? inlink->w : outlink->w, RK_RGA_AFBC_16x16_STRIDE_ALIGN);
+        h_stride = FFALIGN(pat_preproc ? inlink->h : outlink->h, RK_RGA_AFBC_16x16_STRIDE_ALIGN);
 
         if ((info.rect.format == RK_FORMAT_YCbCr_420_SP_10B ||
              info.rect.format == RK_FORMAT_YCbCr_422_SP_10B) && (w_stride % 64)) {
@@ -610,7 +648,7 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
 
         info.rect.wstride = w_stride;
         info.rect.hstride = h_stride;
-        info.rd_mode = 1 << 1; /* IM_FBC_MODE */
+        info.rd_mode = 1 << 1; /* IM_AFBC16x16_MODE */
 
         desc->objects[0].format_modifier =
             DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_SPARSE | AFBC_FORMAT_MOD_BLOCK_SIZE_16x16);
@@ -646,12 +684,19 @@ static av_cold int init_hwframes_ctx(AVFilterContext *avctx)
     AVHWFramesContext *hwfc_in;
     AVHWFramesContext *hwfc_out;
     AVBufferRef       *hwfc_out_ref;
+    AVHWDeviceContext *device_ctx;
+    AVRKMPPFramesContext *rkmpp_fc;
     int                ret;
 
     if (!inlink->hw_frames_ctx)
         return AVERROR(EINVAL);
 
     hwfc_in = (AVHWFramesContext *)inlink->hw_frames_ctx->data;
+    device_ctx = (AVHWDeviceContext *)hwfc_in->device_ref->data;
+
+    if (!device_ctx || device_ctx->type != AV_HWDEVICE_TYPE_RKMPP)
+        return AVERROR(EINVAL);
+
     hwfc_out_ref = av_hwframe_ctx_alloc(hwfc_in->device_ref);
     if (!hwfc_out_ref)
         return AVERROR(ENOMEM);
@@ -661,6 +706,9 @@ static av_cold int init_hwframes_ctx(AVFilterContext *avctx)
     hwfc_out->sw_format = r->out_sw_format;
     hwfc_out->width     = outlink->w;
     hwfc_out->height    = outlink->h;
+
+    rkmpp_fc = hwfc_out->hwctx;
+    rkmpp_fc->flags |= MPP_BUFFER_FLAGS_CACHABLE;
 
     ret = av_hwframe_ctx_init(hwfc_out_ref);
     if (ret < 0) {
@@ -683,6 +731,7 @@ static av_cold int init_pat_preproc_hwframes_ctx(AVFilterContext *avctx)
     AVHWFramesContext *hwfc_in0, *hwfc_in1;
     AVHWFramesContext *hwfc_pat;
     AVBufferRef       *hwfc_pat_ref;
+    AVHWDeviceContext *device_ctx0;
     int                ret;
 
     if (!inlink0->hw_frames_ctx || !inlink1->hw_frames_ctx)
@@ -690,6 +739,11 @@ static av_cold int init_pat_preproc_hwframes_ctx(AVFilterContext *avctx)
 
     hwfc_in0 = (AVHWFramesContext *)inlink0->hw_frames_ctx->data;
     hwfc_in1 = (AVHWFramesContext *)inlink1->hw_frames_ctx->data;
+    device_ctx0 = (AVHWDeviceContext *)hwfc_in0->device_ref->data;
+
+    if (!device_ctx0 || device_ctx0->type != AV_HWDEVICE_TYPE_RKMPP)
+        return AVERROR(EINVAL);
+
     hwfc_pat_ref = av_hwframe_ctx_alloc(hwfc_in0->device_ref);
     if (!hwfc_pat_ref)
         return AVERROR(ENOMEM);
@@ -741,6 +795,15 @@ static av_cold int verify_rga_frame_info(AVFilterContext *avctx,
          dst->pix_fmt == AV_PIX_FMT_P210)) {
         av_log(avctx, AV_LOG_ERROR, "'%s' is only supported by RGA3\n",
                av_get_pix_fmt_name(AV_PIX_FMT_P210));
+        return AVERROR(ENOSYS);
+    }
+    /* NV24/NV42 requires RGA2-Pro */
+    if (!r->has_rga2p &&
+        (src->pix_fmt == AV_PIX_FMT_NV24 ||
+         dst->pix_fmt == AV_PIX_FMT_NV42)) {
+        av_log(avctx, AV_LOG_ERROR, "'%s' and '%s' are only supported by RGA2-Pro\n",
+               av_get_pix_fmt_name(AV_PIX_FMT_NV24),
+               av_get_pix_fmt_name(AV_PIX_FMT_NV42));
         return AVERROR(ENOSYS);
     }
     /* Input formats that requires RGA2 */
@@ -803,11 +866,15 @@ static av_cold int verify_rga_frame_info(AVFilterContext *avctx,
     if (src->pix_fmt == AV_PIX_FMT_GRAY8 ||
         src->pix_fmt == AV_PIX_FMT_YUV420P ||
         src->pix_fmt == AV_PIX_FMT_YUV422P ||
+        src->pix_fmt == AV_PIX_FMT_NV24 ||
+        src->pix_fmt == AV_PIX_FMT_NV42 ||
         src->pix_fmt == AV_PIX_FMT_RGB555LE ||
         src->pix_fmt == AV_PIX_FMT_BGR555LE ||
         dst->pix_fmt == AV_PIX_FMT_GRAY8 ||
         dst->pix_fmt == AV_PIX_FMT_YUV420P ||
         dst->pix_fmt == AV_PIX_FMT_YUV422P ||
+        dst->pix_fmt == AV_PIX_FMT_NV24 ||
+        dst->pix_fmt == AV_PIX_FMT_NV42 ||
         dst->pix_fmt == AV_PIX_FMT_RGB555LE ||
         dst->pix_fmt == AV_PIX_FMT_BGR555LE ||
         dst->pix_fmt == AV_PIX_FMT_ARGB ||
@@ -841,8 +908,11 @@ static av_cold int verify_rga_frame_info(AVFilterContext *avctx,
     if ((ret = verify_rga_frame_info_io_dynamic(avctx, src, dst)) < 0)
         return ret;
 
-    if (r->is_rga2_used)
+    if (r->is_rga2_used) {
         r->scheduler_core = 0x4;
+        if (r->has_rga2p)
+            r->scheduler_core |= 0x8;
+    }
 
     /* Prioritize RGA3 on multicore RGA hw to avoid dma32 & algorithm quirks as much as possible */
     if (r->has_rga3 && r->has_rga2e && !r->is_rga2_used &&
@@ -918,6 +988,7 @@ av_cold int ff_rkrga_init(AVFilterContext *avctx, RKRGAParam *param)
 {
     RKRGAContext *r = avctx->priv;
     int i, ret;
+    int rga_core_mask = 0x7;
     const char *rga_ver = querystring(RGA_VERSION);
 
     r->got_frame = 0;
@@ -925,6 +996,7 @@ av_cold int ff_rkrga_init(AVFilterContext *avctx, RKRGAParam *param)
     r->has_rga2  = !!strstr(rga_ver, "RGA_2");
     r->has_rga2l = !!strstr(rga_ver, "RGA_2_lite");
     r->has_rga2e = !!strstr(rga_ver, "RGA_2_Enhance");
+    r->has_rga2p = !!strstr(rga_ver, "RGA_2_PRO");
     r->has_rga3  = !!strstr(rga_ver, "RGA_3");
 
     if (!(r->has_rga2 || r->has_rga3)) {
@@ -932,18 +1004,21 @@ av_cold int ff_rkrga_init(AVFilterContext *avctx, RKRGAParam *param)
         return AVERROR(ENOSYS);
     }
 
+    if (r->has_rga2p)
+        rga_core_mask = 0xf;
+
     /* RGA core */
-    if (r->scheduler_core && !(r->has_rga2 && r->has_rga3)) {
+    if (r->scheduler_core && !(r->has_rga2 && r->has_rga3) && !r->has_rga2p) {
         av_log(avctx, AV_LOG_WARNING, "Scheduler core cannot be set on non-multicore RGA hw, ignoring\n");
         r->scheduler_core = 0;
     }
-    if (r->scheduler_core && r->scheduler_core != (r->scheduler_core & 0x7)) {
+    if (r->scheduler_core && r->scheduler_core != (r->scheduler_core & rga_core_mask)) {
         av_log(avctx, AV_LOG_WARNING, "Invalid scheduler core set, ignoring\n");
         r->scheduler_core = 0;
     }
     if (r->scheduler_core && r->scheduler_core == (r->scheduler_core & 0x3))
-        r->has_rga2 = r->has_rga2l = r->has_rga2e = 0;
-    if (r->scheduler_core == 0x4)
+        r->has_rga2 = r->has_rga2l = r->has_rga2e = r->has_rga2p = 0;
+    if (r->scheduler_core == 0x4 && !r->has_rga2p)
         r->has_rga3 = 0;
 
     r->filter_frame = param->filter_frame;
