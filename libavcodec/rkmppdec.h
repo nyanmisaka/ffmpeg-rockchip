@@ -35,12 +35,14 @@
 #include "hwconfig.h"
 #include "internal.h"
 
+#include "libavutil/avstring.h"
 #include "libavutil/hwcontext_rkmpp.h"
 #include "libavutil/mastering_display_metadata.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 
-#define MAX_ERRINFO_COUNT 100
+#define MAX_ERRINFO_COUNT   100
+#define MAX_SOC_NAME_LENGTH 128
 
 typedef struct RKMPPDecContext {
     AVClass       *class;
@@ -58,6 +60,7 @@ typedef struct RKMPPDecContext {
     int            info_change;
     int            errinfo_cnt;
     int            got_frame;
+    int            use_rfbc;
 
     int            deint;
     int            afbc;
