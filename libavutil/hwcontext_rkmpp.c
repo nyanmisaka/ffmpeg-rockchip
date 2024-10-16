@@ -52,6 +52,7 @@ static const struct {
     { AV_PIX_FMT_NV21,      DRM_FORMAT_NV21,     },
     { AV_PIX_FMT_NV16,      DRM_FORMAT_NV16,     },
     { AV_PIX_FMT_NV24,      DRM_FORMAT_NV24,     },
+    { AV_PIX_FMT_NV42,      DRM_FORMAT_NV42,     },
     /* semi-planar YUV 10-bit */
     { AV_PIX_FMT_P010,      DRM_FORMAT_P010,     },
     { AV_PIX_FMT_P210,      DRM_FORMAT_P210,     },
@@ -96,15 +97,15 @@ static int rkmpp_device_create(AVHWDeviceContext *hwdev, const char *device,
     AVRKMPPDeviceContext *hwctx = hwdev->hwctx;
     AVDictionaryEntry *opt_d = NULL;
 
-    hwctx->flags = MPP_BUFFER_FLAGS_DMA32 | MPP_BUFFER_FLAGS_CACHABLE;
+    hwctx->flags = MPP_BUFFER_FLAGS_DMA32;
 
     opt_d = av_dict_get(opts, "dma32", NULL, 0);
     if (opt_d && !strtol(opt_d->value, NULL, 10))
         hwctx->flags &= ~MPP_BUFFER_FLAGS_DMA32;
 
     opt_d = av_dict_get(opts, "cacheable", NULL, 0);
-    if (opt_d && !strtol(opt_d->value, NULL, 10))
-        hwctx->flags &= ~MPP_BUFFER_FLAGS_CACHABLE;
+    if (opt_d && strtol(opt_d->value, NULL, 10))
+        hwctx->flags |= MPP_BUFFER_FLAGS_CACHABLE;
 
     return 0;
 }
@@ -299,7 +300,8 @@ static int rkmpp_frames_init(AVHWFramesContext *hwfc)
             return AVERROR(ENOMEM);
     }
 
-    ret = mpp_buffer_group_get_internal(&avfc->buf_group, MPP_BUFFER_TYPE_DRM | hwctx->flags);
+    ret = mpp_buffer_group_get_internal(&avfc->buf_group,
+                                        MPP_BUFFER_TYPE_DRM | hwctx->flags | avfc->flags);
     if (ret != MPP_OK) {
         av_log(hwfc, AV_LOG_ERROR, "Failed to get MPP internal buffer group: %d\n", ret);
         return AVERROR_EXTERNAL;
@@ -356,13 +358,13 @@ typedef struct RKMPPDRMMapping {
 static void rkmpp_unmap_frame(AVHWFramesContext *hwfc,
                               HWMapDescriptor *hwmap)
 {
-    AVRKMPPDeviceContext *hwctx = hwfc->device_ctx->hwctx;
+    AVRKMPPFramesContext *avfc = hwfc->hwctx;
     RKMPPDRMMapping *map = hwmap->priv;
 
     for (int i = 0; i < map->nb_regions; i++) {
 #if HAVE_LINUX_DMA_BUF_H
         struct dma_buf_sync sync = { .flags = DMA_BUF_SYNC_END | map->sync_flags };
-        if (hwctx->flags & MPP_BUFFER_FLAGS_CACHABLE)
+        if (avfc->flags & MPP_BUFFER_FLAGS_CACHABLE)
             ioctl(map->object[i], DMA_BUF_IOCTL_SYNC, &sync);
 #endif
         if (map->address[i] && map->unmap[i])
@@ -375,7 +377,7 @@ static void rkmpp_unmap_frame(AVHWFramesContext *hwfc,
 static int rkmpp_map_frame(AVHWFramesContext *hwfc,
                            AVFrame *dst, const AVFrame *src, int flags)
 {
-    AVRKMPPDeviceContext *hwctx = hwfc->device_ctx->hwctx;
+    AVRKMPPFramesContext *avfc = hwfc->hwctx;
     const AVRKMPPDRMFrameDescriptor *desc = (AVRKMPPDRMFrameDescriptor *)src->data[0];
 #if HAVE_LINUX_DMA_BUF_H
     struct dma_buf_sync sync_start = { 0 };
@@ -435,7 +437,7 @@ static int rkmpp_map_frame(AVHWFramesContext *hwfc,
 #if HAVE_LINUX_DMA_BUF_H
         /* We're not checking for errors here because the kernel may not
          * support the ioctl, in which case its okay to carry on */
-        if (hwctx->flags & MPP_BUFFER_FLAGS_CACHABLE)
+        if (avfc->flags & MPP_BUFFER_FLAGS_CACHABLE)
             ioctl(desc->drm_desc.objects[i].fd, DMA_BUF_IOCTL_SYNC, &sync_start);
 #endif
     }
