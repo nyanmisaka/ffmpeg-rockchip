@@ -227,9 +227,9 @@ static av_cold int set_size_info(AVFilterContext *ctx,
 
     outlink->w = w;
     outlink->h = h;
-    if (outlink->w < 2 || outlink->w > 8128 ||
-        outlink->h < 2 || outlink->h > 8128) {
-        av_log(ctx, AV_LOG_ERROR, "Supported output size is range from 2x2 ~ 8128x8128\n");
+    if (outlink->w < 2 || outlink->w > 8192 ||
+        outlink->h < 2 || outlink->h > 8192) {
+        av_log(ctx, AV_LOG_ERROR, "Supported output size is range from 2x2 ~ 8192x8192\n");
         return AVERROR(EINVAL);
     }
 
@@ -477,6 +477,7 @@ static av_cold void rgavpp_uninit(AVFilterContext *ctx)
         { "rga3_core0", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, FLAGS, "core" }, /* RGA3_SCHEDULER_CORE0 */ \
         { "rga3_core1", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 2 }, 0, 0, FLAGS, "core" }, /* RGA3_SCHEDULER_CORE1 */ \
         { "rga2_core0", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 4 }, 0, 0, FLAGS, "core" }, /* RGA2_SCHEDULER_CORE0 */ \
+        { "rga2_core1", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 8 }, 0, 0, FLAGS, "core" }, /* RGA2_SCHEDULER_CORE1 */ \
     { "async_depth", "Set the internal parallelization depth", OFFSET(rga.async_depth), AV_OPT_TYPE_INT, { .i64 = 2 }, 0, 4, .flags = FLAGS }, \
     { "afbc", "Enable AFBC (Arm Frame Buffer Compression) to save bandwidth", OFFSET(rga.afbc_out), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, .flags = FLAGS },
 
