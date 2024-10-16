@@ -30,6 +30,8 @@
 
 #include "rkmppdec.h"
 
+#include <fcntl.h>
+#include <unistd.h>
 #if CONFIG_RKRGA
 #include <rga/im2d.h>
 #endif
@@ -57,6 +59,7 @@ static uint32_t rkmpp_get_drm_format(MppFrameFormat mpp_fmt)
     case MPP_FMT_YUV420SP_10BIT:    return DRM_FORMAT_NV15;
     case MPP_FMT_YUV422SP:          return DRM_FORMAT_NV16;
     case MPP_FMT_YUV422SP_10BIT:    return DRM_FORMAT_NV20;
+    case MPP_FMT_YUV444SP:          return DRM_FORMAT_NV24;
     default:                        return DRM_FORMAT_INVALID;
     }
 }
@@ -68,6 +71,7 @@ static uint32_t rkmpp_get_drm_afbc_format(MppFrameFormat mpp_fmt)
     case MPP_FMT_YUV420SP_10BIT:    return DRM_FORMAT_YUV420_10BIT;
     case MPP_FMT_YUV422SP:          return DRM_FORMAT_YUYV;
     case MPP_FMT_YUV422SP_10BIT:    return DRM_FORMAT_Y210;
+    case MPP_FMT_YUV444SP:          return DRM_FORMAT_VUY888;
     default:                        return DRM_FORMAT_INVALID;
     }
 }
@@ -79,6 +83,7 @@ static uint32_t rkmpp_get_av_format(MppFrameFormat mpp_fmt)
     case MPP_FMT_YUV420SP_10BIT:    return AV_PIX_FMT_NV15;
     case MPP_FMT_YUV422SP:          return AV_PIX_FMT_NV16;
     case MPP_FMT_YUV422SP_10BIT:    return AV_PIX_FMT_NV20;
+    case MPP_FMT_YUV444SP:          return AV_PIX_FMT_NV24;
     default:                        return AV_PIX_FMT_NONE;
     }
 }
@@ -107,6 +112,35 @@ static int get_afbc_byte_stride(const AVPixFmtDescriptor *desc,
     return (*stride > 0) ? 0 : AVERROR(EINVAL);
 }
 
+static void read_soc_name(AVCodecContext *avctx, char *name, int size)
+{
+    const char *dt_path = "/proc/device-tree/compatible";
+    int fd = open(dt_path, O_RDONLY);
+
+    if (fd < 0) {
+        av_log(avctx, AV_LOG_VERBOSE, "Unable to open '%s' for reading SoC name\n", dt_path);
+    } else {
+        ssize_t soc_name_len = 0;
+
+        snprintf(name, size - 1, "unknown");
+        soc_name_len = read(fd, name, size - 1);
+        if (soc_name_len > 0) {
+            name[soc_name_len] = '\0';
+            /* replacing the termination character to space */
+            for (char *ptr = name;; ptr = name) {
+                ptr += av_strnlen(name, size);
+                if (ptr >= name + soc_name_len - 1)
+                    break;
+                *ptr = ' ';
+            }
+
+            av_log(avctx, AV_LOG_VERBOSE, "Found SoC name from device-tree: '%s'\n", name);
+        }
+
+        close(fd);
+    }
+}
+
 static av_cold int rkmpp_decode_close(AVCodecContext *avctx)
 {
     RKMPPDecContext *r = avctx->priv_data;
@@ -116,6 +150,7 @@ static av_cold int rkmpp_decode_close(AVCodecContext *avctx)
     r->info_change = 0;
     r->errinfo_cnt = 0;
     r->got_frame = 0;
+    r->use_rfbc = 0;
 
     if (r->mapi) {
         r->mapi->reset(r->mctx);
@@ -141,6 +176,7 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
     RKMPPDecContext *r = avctx->priv_data;
     MppCodingType coding_type = MPP_VIDEO_CodingUnused;
     const char *opts_env = NULL;
+    char soc_name[MAX_SOC_NAME_LENGTH];
     int ret, is_fmt_supported = 0;
     enum AVPixelFormat pix_fmts[3] = { AV_PIX_FMT_DRM_PRIME,
                                        AV_PIX_FMT_NV12,
@@ -153,9 +189,11 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
     switch (avctx->pix_fmt) {
     case AV_PIX_FMT_YUV420P:
     case AV_PIX_FMT_YUVJ420P:
+        pix_fmts[1] = AV_PIX_FMT_NV12;
         is_fmt_supported = 1;
         break;
     case AV_PIX_FMT_YUV420P10:
+        pix_fmts[1] = AV_PIX_FMT_NV15;
         is_fmt_supported =
             avctx->codec_id == AV_CODEC_ID_H264 ||
             avctx->codec_id == AV_CODEC_ID_HEVC ||
@@ -163,9 +201,19 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
             avctx->codec_id == AV_CODEC_ID_AV1;
         break;
     case AV_PIX_FMT_YUV422P:
-    case AV_PIX_FMT_YUV422P10:
+        pix_fmts[1] = AV_PIX_FMT_NV16;
         is_fmt_supported =
             avctx->codec_id == AV_CODEC_ID_H264;
+        break;
+    case AV_PIX_FMT_YUV422P10:
+        pix_fmts[1] = AV_PIX_FMT_NV20;
+        is_fmt_supported =
+            avctx->codec_id == AV_CODEC_ID_H264;
+        break;
+    case AV_PIX_FMT_YUV444P:
+        pix_fmts[1] = AV_PIX_FMT_NV24;
+        is_fmt_supported =
+            avctx->codec_id == AV_CODEC_ID_HEVC;
         break;
     case AV_PIX_FMT_NONE: /* fallback to drm_prime */
         is_fmt_supported = 1;
@@ -225,16 +273,27 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
     if (avctx->pix_fmt != AV_PIX_FMT_DRM_PRIME)
         r->afbc = 0;
 
+    if (r->afbc > RKMPP_DEC_AFBC_OFF) {
+        read_soc_name(avctx, soc_name, sizeof(soc_name));
+        r->use_rfbc = !!strstr(soc_name, "rk3576");
+    }
+
     if (r->afbc == RKMPP_DEC_AFBC_ON_RGA) {
 #if CONFIG_RKRGA
         const char *rga_ver = querystring(RGA_VERSION);
-        int has_rga3 = !!strstr(rga_ver, "RGA_3");
-        int is_rga3_compat = avctx->width >= 68 &&
-                             avctx->width <= 8176 &&
-                             avctx->height >= 2 &&
-                             avctx->height <= 8176;
+        int has_rga2p = !!strstr(rga_ver, "RGA_2_PRO");
+        int has_rga3  = !!strstr(rga_ver, "RGA_3");
+        int is_rga2p_compat = avctx->width >= 2 &&
+                              avctx->width <= 8192 &&
+                              avctx->height >= 2 &&
+                              avctx->height <= 8192;
+        int is_rga3_compat  = avctx->width >= 68 &&
+                              avctx->width <= 8176 &&
+                              avctx->height >= 2 &&
+                              avctx->height <= 8176;
 
-        if (!has_rga3 || !is_rga3_compat) {
+        r->use_rfbc = r->use_rfbc || has_rga2p;
+        if (!((has_rga2p && is_rga2p_compat) || (has_rga3 && is_rga3_compat))) {
 #endif
             av_log(avctx, AV_LOG_VERBOSE, "AFBC is requested without capable RGA, ignoring\n");
             r->afbc = RKMPP_DEC_AFBC_OFF;
@@ -290,6 +349,7 @@ static int rkmpp_set_buffer_group(AVCodecContext *avctx,
 {
     RKMPPDecContext *r = avctx->priv_data;
     AVHWFramesContext *hwfc = NULL;
+    AVRKMPPFramesContext *rkmpp_fc = NULL;
     int i, ret, decoder_pool_size;
 
     if (!r->hwdevice)
@@ -317,15 +377,15 @@ static int rkmpp_set_buffer_group(AVCodecContext *avctx,
     hwfc->width     = FFALIGN(width,  16);
     hwfc->height    = FFALIGN(height, 16);
 
-    if (r->buf_mode == RKMPP_DEC_HALF_INTERNAL) {
-        AVRKMPPFramesContext *rkmpp_fc = NULL;
+    rkmpp_fc = hwfc->hwctx;
+    rkmpp_fc->flags |= MPP_BUFFER_FLAGS_CACHABLE;
 
+    if (r->buf_mode == RKMPP_DEC_HALF_INTERNAL) {
         if ((ret = av_hwframe_ctx_init(r->hwframe)) < 0) {
             av_log(avctx, AV_LOG_ERROR, "Failed to init RKMPP frame pool\n");
             goto fail;
         }
 
-        rkmpp_fc = hwfc->hwctx;
         r->buf_group = rkmpp_fc->buf_group;
         goto attach;
     } else if (r->buf_mode != RKMPP_DEC_PURE_EXTERNAL) {
@@ -539,7 +599,8 @@ static int rkmpp_export_frame(AVCodecContext *avctx, AVFrame *frame, MppFrame mp
 
     if (is_afbc) {
         desc->drm_desc.objects[0].format_modifier =
-            DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_SPARSE | AFBC_FORMAT_MOD_BLOCK_SIZE_16x16);
+            r->use_rfbc ? DRM_FORMAT_MOD_ROCKCHIP_RFBC(ROCKCHIP_RFBC_BLOCK_SIZE_64x4)
+                        : DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_SPARSE | AFBC_FORMAT_MOD_BLOCK_SIZE_16x16);
 
         layer->format = rkmpp_get_drm_afbc_format(mpp_fmt);
         layer->nb_planes = 1;
@@ -551,7 +612,7 @@ static int rkmpp_export_frame(AVCodecContext *avctx, AVFrame *frame, MppFrame mp
             return ret;
 
         /* MPP specific AFBC src_y offset, not memory address offset */
-        frame->crop_top = mpp_frame_get_offset_y(mpp_frame);
+        frame->crop_top = r->use_rfbc ? 0 : mpp_frame_get_offset_y(mpp_frame);
     } else {
         layer->format = rkmpp_get_drm_format(mpp_fmt);
         layer->nb_planes = 2;
@@ -561,6 +622,9 @@ static int rkmpp_export_frame(AVCodecContext *avctx, AVFrame *frame, MppFrame mp
         layer->planes[1].object_index = 0;
         layer->planes[1].offset = layer->planes[0].pitch * mpp_frame_get_ver_stride(mpp_frame);
         layer->planes[1].pitch  = layer->planes[0].pitch;
+
+        if (avctx->sw_pix_fmt == AV_PIX_FMT_NV24)
+            layer->planes[1].pitch *= 2;
     }
 
     if ((ret = frame_create_buf(frame, mpp_frame, mpp_frame_get_buf_size(mpp_frame),
@@ -767,6 +831,7 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
             break;
         case AV_PIX_FMT_NV12:
         case AV_PIX_FMT_NV16:
+        case AV_PIX_FMT_NV24:
         case AV_PIX_FMT_NV15:
         case AV_PIX_FMT_NV20:
             {
