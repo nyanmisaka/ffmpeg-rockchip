@@ -34,10 +34,12 @@
 #include "libavutil/hwcontext.h"
 #include "libavutil/hwcontext_rkmpp.h"
 
-#define ALIGN_DOWN(a, b) ((a) & ~((b)-1))
-#define RK_RGA_YUV_ALIGN         2
-#define RK_RGA_AFBC_STRIDE_ALIGN 16
+#define RK_RGA_YUV_ALIGN                2
+#define RK_RGA_AFBC_16x16_STRIDE_ALIGN  16
+#define RK_RGA_RFBC_64x4_STRIDE_ALIGN_W 64
+#define RK_RGA_RFBC_64x4_STRIDE_ALIGN_H 4
 
+#define ALIGN_DOWN(a, b) ((a) & ~((b)-1))
 #define FF_INLINK_IDX(link)  ((int)((link)->dstpad - (link)->dst->input_pads))
 #define FF_OUTLINK_IDX(link) ((int)((link)->srcpad - (link)->src->output_pads))
 
@@ -90,6 +92,7 @@ typedef struct RKRGAContext {
     int has_rga2;
     int has_rga2l;
     int has_rga2e;
+    int has_rga2p;
     int has_rga3;
     int is_rga2_used;
     int is_overlay_offset_valid;
