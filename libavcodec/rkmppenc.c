@@ -259,6 +259,11 @@ static int rkmpp_set_enc_cfg_prep(AVCodecContext *avctx, AVFrame *frame)
 
     pix_desc = av_pix_fmt_desc_get(r->pix_fmt);
     is_afbc = drm_is_afbc(drm_desc->objects[0].format_modifier);
+    if (!is_afbc &&
+        drm_desc->objects[0].format_modifier != DRM_FORMAT_MOD_LINEAR) {
+        av_log(avctx, AV_LOG_ERROR, "Only linear and AFBC modifiers are supported\n");
+        return AVERROR(ENOSYS);
+    }
     if (is_afbc &&
         !(avctx->codec_id == AV_CODEC_ID_H264 ||
           avctx->codec_id == AV_CODEC_ID_HEVC)) {
@@ -532,7 +537,8 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
             return AVERROR_EXTERNAL;
         }
 
-        header_mode = MPP_ENC_HEADER_MODE_EACH_IDR;
+        header_mode = (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER)
+                      ? MPP_ENC_HEADER_MODE_DEFAULT : MPP_ENC_HEADER_MODE_EACH_IDR;
         if ((ret = r->mapi->control(r->mctx, MPP_ENC_SET_HEADER_MODE, &header_mode)) != MPP_OK) {
             av_log(avctx, AV_LOG_ERROR, "Failed to set header mode: %d\n", ret);
             return AVERROR_EXTERNAL;
@@ -636,6 +642,11 @@ static MPPEncFrame *rkmpp_submit_frame(AVCodecContext *avctx, AVFrame *frame)
     plane0 = &layer->planes[0];
 
     is_afbc = drm_is_afbc(drm_desc->objects[0].format_modifier);
+    if (!is_afbc &&
+        drm_desc->objects[0].format_modifier != DRM_FORMAT_MOD_LINEAR) {
+        av_log(avctx, AV_LOG_ERROR, "Only linear and AFBC modifiers are supported\n");
+        goto exit;
+    }
     if (is_afbc &&
         !(avctx->codec_id == AV_CODEC_ID_H264 ||
           avctx->codec_id == AV_CODEC_ID_HEVC)) {
