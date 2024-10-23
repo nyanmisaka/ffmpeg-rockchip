@@ -800,6 +800,8 @@ static av_cold int verify_rga_frame_info(AVFilterContext *avctx,
     /* NV24/NV42 requires RGA2-Pro */
     if (!r->has_rga2p &&
         (src->pix_fmt == AV_PIX_FMT_NV24 ||
+         src->pix_fmt == AV_PIX_FMT_NV42 ||
+         dst->pix_fmt == AV_PIX_FMT_NV24 ||
          dst->pix_fmt == AV_PIX_FMT_NV42)) {
         av_log(avctx, AV_LOG_ERROR, "'%s' and '%s' are only supported by RGA2-Pro\n",
                av_get_pix_fmt_name(AV_PIX_FMT_NV24),
