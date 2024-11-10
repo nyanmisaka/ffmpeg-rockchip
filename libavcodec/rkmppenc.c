@@ -758,12 +758,6 @@ exit:
     return ret;
 }
 
-static void rkmpp_free_packet_buf(void *opaque, uint8_t *data)
-{
-    MppPacket mpp_pkt = opaque;
-    mpp_packet_deinit(&mpp_pkt);
-}
-
 static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet, int timeout)
 {
     RKMPPEncContext *r = avctx->priv_data;
@@ -794,13 +788,15 @@ static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet, int timeout
     }
     av_log(avctx, AV_LOG_DEBUG, "Received a packet\n");
 
-    packet->data = mpp_packet_get_data(mpp_pkt);
-    packet->size = mpp_packet_get_length(mpp_pkt);
-    packet->buf = av_buffer_create(packet->data, packet->size, rkmpp_free_packet_buf,
-                                   mpp_pkt, AV_BUFFER_FLAG_READONLY);
-    if (!packet->buf) {
-        ret = AVERROR(ENOMEM);
-        goto exit;
+    /* freeing MppPacket data in buffer callbacks is not supported in async mode */
+    {
+        size_t mpp_pkt_length = mpp_packet_get_length(mpp_pkt);
+
+        if ((ret = ff_alloc_packet(avctx, packet, mpp_pkt_length)) < 0) {
+            av_log(avctx, AV_LOG_ERROR, "ff_alloc_packet failed: %d\n", ret);
+            goto exit;
+        }
+        memcpy(packet->data, mpp_packet_get_data(mpp_pkt), mpp_pkt_length);
     }
 
     packet->time_base.num = avctx->time_base.num;
@@ -814,6 +810,7 @@ static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet, int timeout
         ret = AVERROR_EXTERNAL;
         goto exit;
     }
+    mpp_packet_deinit(&mpp_pkt);
 
     mpp_meta_get_s32(mpp_meta, KEY_OUTPUT_INTRA, &key_frame);
     if (key_frame)
