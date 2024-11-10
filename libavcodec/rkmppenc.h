@@ -244,7 +244,7 @@ static const AVCodecHWConfigInternal *const rkmpp_enc_hw_configs[] = {
 static const FFCodecDefault rkmpp_enc_defaults[] = {
     { "b",  "2M"  },
     { "g",  "250" },
-    { NULL }
+    { NULL },
 };
 
 #define DEFINE_RKMPP_ENCODER(x, X, xx) \
