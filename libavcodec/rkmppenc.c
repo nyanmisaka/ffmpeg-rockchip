@@ -792,8 +792,8 @@ static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet, int timeout
     {
         size_t mpp_pkt_length = mpp_packet_get_length(mpp_pkt);
 
-        if ((ret = ff_alloc_packet(avctx, packet, mpp_pkt_length)) < 0) {
-            av_log(avctx, AV_LOG_ERROR, "ff_alloc_packet failed: %d\n", ret);
+        if ((ret = ff_get_encode_buffer(avctx, packet, mpp_pkt_length, 0)) < 0) {
+            av_log(avctx, AV_LOG_ERROR, "ff_get_encode_buffer failed: %d\n", ret);
             goto exit;
         }
         memcpy(packet->data, mpp_packet_get_data(mpp_pkt), mpp_pkt_length);
