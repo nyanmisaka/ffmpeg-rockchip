@@ -889,6 +889,11 @@ static int rkmpp_encode_close(AVCodecContext *avctx)
     r->cfg_init = 0;
     r->async_frames = 0;
 
+    if (r->mcfg) {
+        mpp_enc_cfg_deinit(r->mcfg);
+        r->mcfg = NULL;
+    }
+
     if (r->mapi) {
         r->mapi->reset(r->mctx);
         mpp_destroy(r->mctx);
