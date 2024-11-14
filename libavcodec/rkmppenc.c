@@ -810,7 +810,6 @@ static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet, int timeout
         ret = AVERROR_EXTERNAL;
         goto exit;
     }
-    mpp_packet_deinit(&mpp_pkt);
 
     mpp_meta_get_s32(mpp_meta, KEY_OUTPUT_INTRA, &key_frame);
     if (key_frame)
@@ -830,6 +829,7 @@ static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet, int timeout
     mpp_buffer_set_index(mpp_buf, -1);
     clear_unused_frames(r->frame_list);
 
+    mpp_packet_deinit(&mpp_pkt);
     return 0;
 
 exit:
