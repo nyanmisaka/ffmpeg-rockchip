@@ -172,8 +172,7 @@ static int rkmpp_get_aligned_linesize(enum AVPixelFormat pix_fmt, int width, int
 
     if (pix_fmt == AV_PIX_FMT_NV15 ||
         pix_fmt == AV_PIX_FMT_NV20) {
-        const int log2_chroma_w = plane == 1 ? 1 : 0;
-        const int width_align_256_odds = FFALIGN(width << log2_chroma_w, 256) | 256;
+        const int width_align_256_odds = FFALIGN(width, 256) | 256;
         return FFALIGN(width_align_256_odds * 10 / 8, 64);
     }
 
