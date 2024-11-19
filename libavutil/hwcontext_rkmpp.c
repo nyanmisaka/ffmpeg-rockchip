@@ -42,7 +42,7 @@ static const struct {
     uint32_t drm_format;
 } supported_formats[] = {
     /* grayscale */
-    { AV_PIX_FMT_GRAY8,     DRM_FORMAT_R8        },
+    { AV_PIX_FMT_GRAY8,     DRM_FORMAT_R8,       },
     /* fully-planar YUV */
     { AV_PIX_FMT_YUV420P,   DRM_FORMAT_YUV420,   },
     { AV_PIX_FMT_YUV422P,   DRM_FORMAT_YUV422,   },
@@ -457,6 +457,7 @@ static int rkmpp_map_frame(AVHWFramesContext *hwfc,
 
     dst->width  = src->width;
     dst->height = src->height;
+    dst->hw_frames_ctx = NULL;
 
     err = ff_hwframe_map_create(src->hw_frames_ctx, dst, src,
                                 &rkmpp_unmap_frame, map);
