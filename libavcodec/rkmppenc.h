@@ -143,7 +143,7 @@ static const AVOption h264_options[] = {
         { "cabac", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, INT_MIN, INT_MAX, VE, "coder" },
     { "8x8dct", "Set the high profile 8x8 transform", OFFSET(dct8x8), AV_OPT_TYPE_BOOL,
             { .i64 = 1 }, 0, 1, VE, "8x8dct" },
-    { NULL }
+    { NULL },
 };
 
 static const AVOption hevc_options[] = {
@@ -170,7 +170,7 @@ static const AVOption hevc_options[] = {
         { "6",          NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 180 }, 0, 0, VE, "level" },
         { "6.1",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 183 }, 0, 0, VE, "level" },
         { "6.2",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 186 }, 0, 0, VE, "level" },
-    { NULL }
+    { NULL },
 };
 
 static const AVOption mjpeg_options[] = {
@@ -180,7 +180,7 @@ static const AVOption mjpeg_options[] = {
             { .i64 = -1 }, -1, 99, VE, "qp_max" }, \
     { "qp_min", "Set the min QP/Q_Factor value", OFFSET(qp_min), AV_OPT_TYPE_INT, \
             { .i64 = -1 }, -1, 99, VE, "qp_min" }, \
-    { NULL }
+    { NULL },
 };
 
 static const enum AVPixelFormat rkmpp_enc_pix_fmts_h26x[] = {
