@@ -182,7 +182,7 @@ static int rkmpp_get_aligned_linesize(enum AVPixelFormat pix_fmt, int width, int
         const int pixel_width = av_get_padded_bits_per_pixel(pixdesc) / 8;
         linesize = FFALIGN(linesize / pixel_width, 8) * pixel_width;
     } else if (is_yuv && is_fully_planar) {
-        linesize = FFALIGN(linesize, 8);
+        linesize = FFALIGN(linesize, 16 >> (plane ? pixdesc->log2_chroma_w : 0));
     } else
         linesize = FFALIGN(linesize, 64);
 
