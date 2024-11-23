@@ -815,6 +815,12 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
             ret = AVERROR_EXTERNAL;
             goto exit;
         }
+
+        /* no more new pkts after EOS, retry to get frame */
+        if (r->draining) {
+            mpp_frame_deinit(&mpp_frame);
+            return rkmpp_get_frame(avctx, frame, MPP_TIMEOUT_MAX);
+        }
         goto exit;
     } else {
         av_log(avctx, AV_LOG_DEBUG, "Received a frame\n");
