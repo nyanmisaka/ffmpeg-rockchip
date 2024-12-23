@@ -92,9 +92,6 @@ struct video_data {
     TimeFilter *timefilter;
     int64_t last_time_m;
 
-    int multiplanar;
-    enum v4l2_buf_type buf_type;
-
     int buffers;
     atomic_int buffers_queued;
     void **buf_start;
@@ -185,13 +182,7 @@ static int device_open(AVFormatContext *ctx, const char* device_path)
     av_log(ctx, AV_LOG_VERBOSE, "fd:%d capabilities:%x\n",
            fd, cap.capabilities);
 
-    if (cap.capabilities & V4L2_CAP_VIDEO_CAPTURE) {
-        s->multiplanar = 0;
-        s->buf_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    } else if (cap.capabilities & V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
-        s->multiplanar = 1;
-        s->buf_type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-    } else {
+    if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
         av_log(ctx, AV_LOG_ERROR, "Not a video capture device.\n");
         err = AVERROR(ENODEV);
         goto fail;
@@ -215,7 +206,7 @@ static int device_init(AVFormatContext *ctx, int *width, int *height,
                        uint32_t pixelformat)
 {
     struct video_data *s = ctx->priv_data;
-    struct v4l2_format fmt = { .type = s->buf_type };
+    struct v4l2_format fmt = { .type = V4L2_BUF_TYPE_VIDEO_CAPTURE };
     int res = 0;
 
     fmt.fmt.pix.width = *width;
@@ -297,7 +288,7 @@ static void list_framesizes(AVFormatContext *ctx, uint32_t pixelformat)
 static void list_formats(AVFormatContext *ctx, int type)
 {
     const struct video_data *s = ctx->priv_data;
-    struct v4l2_fmtdesc vfd = { .type = s->buf_type };
+    struct v4l2_fmtdesc vfd = { .type = V4L2_BUF_TYPE_VIDEO_CAPTURE };
 
     while(!v4l2_ioctl(s->fd, VIDIOC_ENUM_FMT, &vfd)) {
         enum AVCodecID codec_id = ff_fmt_v4l2codec(vfd.pixelformat);
@@ -361,7 +352,7 @@ static int mmap_init(AVFormatContext *ctx)
     int i, res;
     struct video_data *s = ctx->priv_data;
     struct v4l2_requestbuffers req = {
-        .type   = s->buf_type,
+        .type   = V4L2_BUF_TYPE_VIDEO_CAPTURE,
         .count  = desired_video_buffers,
         .memory = V4L2_MEMORY_MMAP
     };
@@ -390,14 +381,10 @@ static int mmap_init(AVFormatContext *ctx)
     }
 
     for (i = 0; i < req.count; i++) {
-        unsigned int buf_length, buf_offset;
-        struct v4l2_plane planes[VIDEO_MAX_PLANES];
         struct v4l2_buffer buf = {
-            .type   = s->buf_type,
+            .type   = V4L2_BUF_TYPE_VIDEO_CAPTURE,
             .index  = i,
-            .memory = V4L2_MEMORY_MMAP,
-            .m.planes = s->multiplanar ? planes : NULL,
-            .length   = s->multiplanar ? VIDEO_MAX_PLANES : 0,
+            .memory = V4L2_MEMORY_MMAP
         };
         if (v4l2_ioctl(s->fd, VIDIOC_QUERYBUF, &buf) < 0) {
             res = AVERROR(errno);
@@ -405,28 +392,16 @@ static int mmap_init(AVFormatContext *ctx)
             return res;
         }
 
-        if (s->multiplanar) {
-            if (buf.length != 1) {
-                av_log(ctx, AV_LOG_ERROR, "multiplanar only supported when buf.length == 1\n");
-                return AVERROR_PATCHWELCOME;
-            }
-            buf_length = buf.m.planes[0].length;
-            buf_offset = buf.m.planes[0].m.mem_offset;
-        } else {
-            buf_length = buf.length;
-            buf_offset = buf.m.offset;
-        }
-
-        s->buf_len[i] = buf_length;
+        s->buf_len[i] = buf.length;
         if (s->frame_size > 0 && s->buf_len[i] < s->frame_size) {
             av_log(ctx, AV_LOG_ERROR,
                    "buf_len[%d] = %d < expected frame size %d\n",
                    i, s->buf_len[i], s->frame_size);
             return AVERROR(ENOMEM);
         }
-        s->buf_start[i] = v4l2_mmap(NULL, buf_length,
+        s->buf_start[i] = v4l2_mmap(NULL, buf.length,
                                PROT_READ | PROT_WRITE, MAP_SHARED,
-                               s->fd, buf_offset);
+                               s->fd, buf.m.offset);
 
         if (s->buf_start[i] == MAP_FAILED) {
             res = AVERROR(errno);
@@ -454,16 +429,13 @@ static int enqueue_buffer(struct video_data *s, struct v4l2_buffer *buf)
 
 static void mmap_release_buffer(void *opaque, uint8_t *data)
 {
-    struct v4l2_plane planes[VIDEO_MAX_PLANES];
     struct v4l2_buffer buf = { 0 };
     struct buff_data *buf_descriptor = opaque;
     struct video_data *s = buf_descriptor->s;
 
-    buf.type = s->buf_type;
+    buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
     buf.index = buf_descriptor->index;
-    buf.m.planes = s->multiplanar ? planes : NULL;
-    buf.length   = s->multiplanar ? VIDEO_MAX_PLANES : 0;
     av_free(buf_descriptor);
 
     enqueue_buffer(s, &buf);
@@ -533,15 +505,11 @@ static int convert_timestamp(AVFormatContext *ctx, int64_t *ts)
 static int mmap_read_frame(AVFormatContext *ctx, AVPacket *pkt)
 {
     struct video_data *s = ctx->priv_data;
-    struct v4l2_plane planes[VIDEO_MAX_PLANES];
     struct v4l2_buffer buf = {
-        .type   = s->buf_type,
-        .memory = V4L2_MEMORY_MMAP,
-        .m.planes = s->multiplanar ? planes : NULL,
-        .length   = s->multiplanar ? VIDEO_MAX_PLANES : 0,
+        .type   = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+        .memory = V4L2_MEMORY_MMAP
     };
     struct timeval buf_ts;
-    unsigned int bytesused;
     int res;
 
     pkt->size = 0;
@@ -568,40 +536,38 @@ static int mmap_read_frame(AVFormatContext *ctx, AVPacket *pkt)
     // always keep at least one buffer queued
     av_assert0(atomic_load(&s->buffers_queued) >= 1);
 
-    bytesused = s->multiplanar ? buf.m.planes[0].bytesused : buf.bytesused;
-
 #ifdef V4L2_BUF_FLAG_ERROR
     if (buf.flags & V4L2_BUF_FLAG_ERROR) {
         av_log(ctx, AV_LOG_WARNING,
                "Dequeued v4l2 buffer contains corrupted data (%d bytes).\n",
-               bytesused);
-        bytesused = 0;
+               buf.bytesused);
+        buf.bytesused = 0;
     } else
 #endif
     {
         /* CPIA is a compressed format and we don't know the exact number of bytes
          * used by a frame, so set it here as the driver announces it. */
         if (ctx->video_codec_id == AV_CODEC_ID_CPIA)
-            s->frame_size = bytesused;
+            s->frame_size = buf.bytesused;
 
-        if (s->frame_size > 0 && bytesused != s->frame_size) {
+        if (s->frame_size > 0 && buf.bytesused != s->frame_size) {
             av_log(ctx, AV_LOG_WARNING,
                    "Dequeued v4l2 buffer contains %d bytes, but %d were expected. Flags: 0x%08X.\n",
-                   bytesused, s->frame_size, buf.flags);
-            bytesused = 0;
+                   buf.bytesused, s->frame_size, buf.flags);
+            buf.bytesused = 0;
         }
     }
 
     /* Image is at s->buff_start[buf.index] */
     if (atomic_load(&s->buffers_queued) == FFMAX(s->buffers / 8, 1)) {
         /* when we start getting low on queued buffers, fall back on copying data */
-        res = av_new_packet(pkt, bytesused);
+        res = av_new_packet(pkt, buf.bytesused);
         if (res < 0) {
             av_log(ctx, AV_LOG_ERROR, "Error allocating a packet.\n");
             enqueue_buffer(s, &buf);
             return res;
         }
-        memcpy(pkt->data, s->buf_start[buf.index], bytesused);
+        memcpy(pkt->data, s->buf_start[buf.index], buf.bytesused);
 
         res = enqueue_buffer(s, &buf);
         if (res) {
@@ -612,7 +578,7 @@ static int mmap_read_frame(AVFormatContext *ctx, AVPacket *pkt)
         struct buff_data *buf_descriptor;
 
         pkt->data     = s->buf_start[buf.index];
-        pkt->size     = bytesused;
+        pkt->size     = buf.bytesused;
 
         buf_descriptor = av_malloc(sizeof(struct buff_data));
         if (!buf_descriptor) {
@@ -649,13 +615,10 @@ static int mmap_start(AVFormatContext *ctx)
     int i, res;
 
     for (i = 0; i < s->buffers; i++) {
-        struct v4l2_plane planes[VIDEO_MAX_PLANES];
         struct v4l2_buffer buf = {
-            .type   = s->buf_type,
+            .type   = V4L2_BUF_TYPE_VIDEO_CAPTURE,
             .index  = i,
-            .memory = V4L2_MEMORY_MMAP,
-            .m.planes = s->multiplanar ? planes : NULL,
-            .length   = s->multiplanar ? VIDEO_MAX_PLANES : 0,
+            .memory = V4L2_MEMORY_MMAP
         };
 
         if (v4l2_ioctl(s->fd, VIDIOC_QBUF, &buf) < 0) {
@@ -667,7 +630,7 @@ static int mmap_start(AVFormatContext *ctx)
     }
     atomic_store(&s->buffers_queued, s->buffers);
 
-    type = s->buf_type;
+    type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (v4l2_ioctl(s->fd, VIDIOC_STREAMON, &type) < 0) {
         res = AVERROR(errno);
         av_log(ctx, AV_LOG_ERROR, "ioctl(VIDIOC_STREAMON): %s\n",
@@ -683,7 +646,7 @@ static void mmap_close(struct video_data *s)
     enum v4l2_buf_type type;
     int i;
 
-    type = s->buf_type;
+    type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     /* We do not check for the result, because we could
      * not do anything about it anyway...
      */
@@ -770,7 +733,7 @@ static int v4l2_set_parameters(AVFormatContext *ctx)
         tpf = &streamparm.parm.capture.timeperframe;
     }
 
-    streamparm.type = s->buf_type;
+    streamparm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (v4l2_ioctl(s->fd, VIDIOC_G_PARM, &streamparm) < 0) {
         ret = AVERROR(errno);
         av_log(ctx, AV_LOG_WARNING, "ioctl(VIDIOC_G_PARM): %s\n", av_err2str(ret));
@@ -958,7 +921,7 @@ static int v4l2_read_header(AVFormatContext *ctx)
     }
 
     if (!s->width && !s->height) {
-        struct v4l2_format fmt = { .type = s->buf_type };
+        struct v4l2_format fmt = { .type = V4L2_BUF_TYPE_VIDEO_CAPTURE };
 
         av_log(ctx, AV_LOG_VERBOSE,
                "Querying the device for the current frame size\n");
