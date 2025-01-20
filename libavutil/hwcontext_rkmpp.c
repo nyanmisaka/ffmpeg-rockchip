@@ -45,8 +45,11 @@ static const struct {
     { AV_PIX_FMT_GRAY8,     DRM_FORMAT_R8,       },
     /* fully-planar YUV */
     { AV_PIX_FMT_YUV420P,   DRM_FORMAT_YUV420,   },
+    { AV_PIX_FMT_YUVJ420P,  DRM_FORMAT_YUV420,   },
     { AV_PIX_FMT_YUV422P,   DRM_FORMAT_YUV422,   },
+    { AV_PIX_FMT_YUVJ422P,  DRM_FORMAT_YUV422,   },
     { AV_PIX_FMT_YUV444P,   DRM_FORMAT_YUV444,   },
+    { AV_PIX_FMT_YUVJ444P,  DRM_FORMAT_YUV444,   },
     /* semi-planar YUV */
     { AV_PIX_FMT_NV12,      DRM_FORMAT_NV12,     },
     { AV_PIX_FMT_NV21,      DRM_FORMAT_NV21,     },
