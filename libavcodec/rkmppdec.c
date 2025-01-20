@@ -201,6 +201,7 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
             avctx->codec_id == AV_CODEC_ID_AV1;
         break;
     case AV_PIX_FMT_YUV422P:
+    case AV_PIX_FMT_YUVJ422P:
         pix_fmts[1] = AV_PIX_FMT_NV16;
         is_fmt_supported =
             avctx->codec_id == AV_CODEC_ID_H264;
@@ -211,6 +212,7 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
             avctx->codec_id == AV_CODEC_ID_H264;
         break;
     case AV_PIX_FMT_YUV444P:
+    case AV_PIX_FMT_YUVJ444P:
         pix_fmts[1] = AV_PIX_FMT_NV24;
         is_fmt_supported =
             avctx->codec_id == AV_CODEC_ID_HEVC;
