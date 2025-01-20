@@ -41,8 +41,11 @@ static MppFrameFormat rkmpp_get_mpp_fmt_h26x(enum AVPixelFormat pix_fmt)
 {
     switch (pix_fmt) {
     case AV_PIX_FMT_GRAY8:   return MPP_FMT_YUV400;
+    case AV_PIX_FMT_YUVJ420P:
     case AV_PIX_FMT_YUV420P: return MPP_FMT_YUV420P;
+    case AV_PIX_FMT_YUVJ422P:
     case AV_PIX_FMT_YUV422P: return MPP_FMT_YUV422P;
+    case AV_PIX_FMT_YUVJ444P:
     case AV_PIX_FMT_YUV444P: return MPP_FMT_YUV444P;
     case AV_PIX_FMT_NV12:    return MPP_FMT_YUV420SP;
     case AV_PIX_FMT_NV21:    return MPP_FMT_YUV420SP_VU;
@@ -68,6 +71,7 @@ static MppFrameFormat rkmpp_get_mpp_fmt_h26x(enum AVPixelFormat pix_fmt)
 static MppFrameFormat rkmpp_get_mpp_fmt_mjpeg(enum AVPixelFormat pix_fmt)
 {
     switch (pix_fmt) {
+    case AV_PIX_FMT_YUVJ420P:
     case AV_PIX_FMT_YUV420P:   return MPP_FMT_YUV420P;
     case AV_PIX_FMT_NV12:      return MPP_FMT_YUV420SP;
     case AV_PIX_FMT_YUYV422:   return MPP_FMT_YUV422_YUYV;
@@ -292,7 +296,13 @@ static int rkmpp_set_enc_cfg_prep(AVCodecContext *avctx, AVFrame *frame)
     mpp_enc_cfg_set_s32(cfg, "prep:colorspace", avctx->colorspace);
     mpp_enc_cfg_set_s32(cfg, "prep:colorprim", avctx->color_primaries);
     mpp_enc_cfg_set_s32(cfg, "prep:colortrc", avctx->color_trc);
+
     mpp_enc_cfg_set_s32(cfg, "prep:colorrange", avctx->color_range);
+    if (r->pix_fmt == AV_PIX_FMT_YUVJ420P ||
+        r->pix_fmt == AV_PIX_FMT_YUVJ422P ||
+        r->pix_fmt == AV_PIX_FMT_YUVJ444P) {
+        mpp_enc_cfg_set_s32(cfg, "prep:colorrange", AVCOL_RANGE_JPEG);
+    }
 
     if (is_afbc) {
         const AVDRMLayerDescriptor *layer = &drm_desc->layers[0];
@@ -615,7 +625,9 @@ static MPPEncFrame *rkmpp_submit_frame(AVCodecContext *avctx, AVFrame *frame)
 
     /* planar YUV quirks */
     if ((r->pix_fmt == AV_PIX_FMT_YUV420P ||
+         r->pix_fmt == AV_PIX_FMT_YUVJ420P ||
          r->pix_fmt == AV_PIX_FMT_YUV422P ||
+         r->pix_fmt == AV_PIX_FMT_YUVJ422P ||
          r->pix_fmt == AV_PIX_FMT_NV24) && (drm_frame->width % 2)) {
         av_log(avctx, AV_LOG_ERROR, "Unsupported width '%d', not 2-aligned\n",
                drm_frame->width);
@@ -636,7 +648,13 @@ static MPPEncFrame *rkmpp_submit_frame(AVCodecContext *avctx, AVFrame *frame)
     mpp_frame_set_colorspace(mpp_frame, avctx->colorspace);
     mpp_frame_set_color_primaries(mpp_frame, avctx->color_primaries);
     mpp_frame_set_color_trc(mpp_frame, avctx->color_trc);
+
     mpp_frame_set_color_range(mpp_frame, avctx->color_range);
+    if (r->pix_fmt == AV_PIX_FMT_YUVJ420P ||
+        r->pix_fmt == AV_PIX_FMT_YUVJ422P ||
+        r->pix_fmt == AV_PIX_FMT_YUVJ444P) {
+        mpp_frame_set_color_range(mpp_frame, AVCOL_RANGE_JPEG);
+    }
 
     layer = &drm_desc->layers[0];
     plane0 = &layer->planes[0];
