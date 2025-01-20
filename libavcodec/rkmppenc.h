@@ -186,8 +186,11 @@ static const AVOption mjpeg_options[] = {
 static const enum AVPixelFormat rkmpp_enc_pix_fmts_h26x[] = {
     AV_PIX_FMT_GRAY8,
     AV_PIX_FMT_YUV420P,
+    AV_PIX_FMT_YUVJ420P,
     AV_PIX_FMT_YUV422P,
+    AV_PIX_FMT_YUVJ422P,
     AV_PIX_FMT_YUV444P,
+    AV_PIX_FMT_YUVJ444P,
     AV_PIX_FMT_NV12,
     AV_PIX_FMT_NV21,
     AV_PIX_FMT_NV16,
@@ -211,6 +214,7 @@ static const enum AVPixelFormat rkmpp_enc_pix_fmts_h26x[] = {
 
 static const enum AVPixelFormat rkmpp_enc_pix_fmts_mjpeg[] = {
     AV_PIX_FMT_YUV420P,
+    AV_PIX_FMT_YUVJ420P,
     AV_PIX_FMT_NV12,
     AV_PIX_FMT_YUYV422,
     AV_PIX_FMT_UYVY422,
