@@ -48,7 +48,9 @@ typedef struct RGAFormatMap {
 #define YUV_FORMATS \
     { AV_PIX_FMT_GRAY8,    RK_FORMAT_YCbCr_400 },        /* RGA2 only */ \
     { AV_PIX_FMT_YUV420P,  RK_FORMAT_YCbCr_420_P },      /* RGA2 only */ \
+    { AV_PIX_FMT_YUVJ420P, RK_FORMAT_YCbCr_420_P },      /* RGA2 only */ \
     { AV_PIX_FMT_YUV422P,  RK_FORMAT_YCbCr_422_P },      /* RGA2 only */ \
+    { AV_PIX_FMT_YUVJ422P, RK_FORMAT_YCbCr_422_P },      /* RGA2 only */ \
     { AV_PIX_FMT_NV12,     RK_FORMAT_YCbCr_420_SP }, \
     { AV_PIX_FMT_NV21,     RK_FORMAT_YCrCb_420_SP }, \
     { AV_PIX_FMT_NV16,     RK_FORMAT_YCbCr_422_SP }, \
@@ -321,6 +323,13 @@ static void set_colorspace_info(RGAFrameInfo *in_info, const AVFrame *in,
             out->color_primaries = AVCOL_PRI_UNSPECIFIED;
             out->color_range     = AVCOL_RANGE_JPEG;
         }
+    }
+
+    /* yuvj2yuv */
+    if ((in_info->pix_fmt == AV_PIX_FMT_YUVJ420P ||
+         in_info->pix_fmt == AV_PIX_FMT_YUVJ422P) &&
+        !(out_info->pix_desc->flags & AV_PIX_FMT_FLAG_RGB)) {
+        out->color_range = AVCOL_RANGE_JPEG;
     }
 }
 
@@ -812,7 +821,9 @@ static av_cold int verify_rga_frame_info(AVFilterContext *avctx,
     if (!r->has_rga2 &&
         (src->pix_fmt == AV_PIX_FMT_GRAY8 ||
          src->pix_fmt == AV_PIX_FMT_YUV420P ||
+         src->pix_fmt == AV_PIX_FMT_YUVJ420P ||
          src->pix_fmt == AV_PIX_FMT_YUV422P ||
+         src->pix_fmt == AV_PIX_FMT_YUVJ422P ||
          src->pix_fmt == AV_PIX_FMT_RGB555LE ||
          src->pix_fmt == AV_PIX_FMT_BGR555LE)) {
         av_log(avctx, AV_LOG_ERROR, "'%s' as input is only supported by RGA2\n",
@@ -823,7 +834,9 @@ static av_cold int verify_rga_frame_info(AVFilterContext *avctx,
     if (!r->has_rga2 &&
         (dst->pix_fmt == AV_PIX_FMT_GRAY8 ||
          dst->pix_fmt == AV_PIX_FMT_YUV420P ||
+         dst->pix_fmt == AV_PIX_FMT_YUVJ420P ||
          dst->pix_fmt == AV_PIX_FMT_YUV422P ||
+         dst->pix_fmt == AV_PIX_FMT_YUVJ422P ||
          dst->pix_fmt == AV_PIX_FMT_RGB555LE ||
          dst->pix_fmt == AV_PIX_FMT_BGR555LE ||
          dst->pix_fmt == AV_PIX_FMT_ARGB ||
@@ -834,12 +847,24 @@ static av_cold int verify_rga_frame_info(AVFilterContext *avctx,
                av_get_pix_fmt_name(dst->pix_fmt));
         return AVERROR(ENOSYS);
     }
+    /* non-YUVJ format to YUVJ format is not supported */
+    if ((dst->pix_fmt == AV_PIX_FMT_YUVJ420P ||
+         dst->pix_fmt == AV_PIX_FMT_YUVJ422P) &&
+         (src->pix_fmt != AV_PIX_FMT_YUVJ420P &&
+          src->pix_fmt != AV_PIX_FMT_YUVJ422P)) {
+        av_log(avctx, AV_LOG_ERROR, "'%s' to '%s' is not supported\n",
+               av_get_pix_fmt_name(src->pix_fmt),
+               av_get_pix_fmt_name(dst->pix_fmt));
+        return AVERROR(ENOSYS);
+    }
     /* P010/P210 requires RGA3 but it can't handle certain formats */
     if ((src->pix_fmt == AV_PIX_FMT_P010 ||
          src->pix_fmt == AV_PIX_FMT_P210) &&
          (dst->pix_fmt == AV_PIX_FMT_GRAY8 ||
           dst->pix_fmt == AV_PIX_FMT_YUV420P ||
+          dst->pix_fmt == AV_PIX_FMT_YUVJ420P ||
           dst->pix_fmt == AV_PIX_FMT_YUV422P ||
+          dst->pix_fmt == AV_PIX_FMT_YUVJ422P ||
           dst->pix_fmt == AV_PIX_FMT_RGB555LE ||
           dst->pix_fmt == AV_PIX_FMT_BGR555LE ||
           dst->pix_fmt == AV_PIX_FMT_ARGB ||
@@ -856,7 +881,9 @@ static av_cold int verify_rga_frame_info(AVFilterContext *avctx,
          dst->pix_fmt == AV_PIX_FMT_P210) &&
          (src->pix_fmt == AV_PIX_FMT_GRAY8 ||
           src->pix_fmt == AV_PIX_FMT_YUV420P ||
+          src->pix_fmt == AV_PIX_FMT_YUVJ420P ||
           src->pix_fmt == AV_PIX_FMT_YUV422P ||
+          src->pix_fmt == AV_PIX_FMT_YUVJ422P ||
           src->pix_fmt == AV_PIX_FMT_RGB555LE ||
           src->pix_fmt == AV_PIX_FMT_BGR555LE)) {
         av_log(avctx, AV_LOG_ERROR, "'%s' to '%s' is not supported\n",
@@ -867,14 +894,18 @@ static av_cold int verify_rga_frame_info(AVFilterContext *avctx,
 
     if (src->pix_fmt == AV_PIX_FMT_GRAY8 ||
         src->pix_fmt == AV_PIX_FMT_YUV420P ||
+        src->pix_fmt == AV_PIX_FMT_YUVJ420P ||
         src->pix_fmt == AV_PIX_FMT_YUV422P ||
+        src->pix_fmt == AV_PIX_FMT_YUVJ422P ||
         src->pix_fmt == AV_PIX_FMT_NV24 ||
         src->pix_fmt == AV_PIX_FMT_NV42 ||
         src->pix_fmt == AV_PIX_FMT_RGB555LE ||
         src->pix_fmt == AV_PIX_FMT_BGR555LE ||
         dst->pix_fmt == AV_PIX_FMT_GRAY8 ||
         dst->pix_fmt == AV_PIX_FMT_YUV420P ||
+        dst->pix_fmt == AV_PIX_FMT_YUVJ420P ||
         dst->pix_fmt == AV_PIX_FMT_YUV422P ||
+        dst->pix_fmt == AV_PIX_FMT_YUVJ422P ||
         dst->pix_fmt == AV_PIX_FMT_NV24 ||
         dst->pix_fmt == AV_PIX_FMT_NV42 ||
         dst->pix_fmt == AV_PIX_FMT_RGB555LE ||
