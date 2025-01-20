@@ -322,13 +322,16 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
     }
 
     if (avctx->hw_device_ctx) {
-        r->hwdevice = av_buffer_ref(avctx->hw_device_ctx);
-        if (!r->hwdevice) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
+        AVBufferRef *device_ref = avctx->hw_device_ctx;
+        AVHWDeviceContext *device_ctx = (AVHWDeviceContext *)device_ref->data;
+
+        if (device_ctx && device_ctx->type == AV_HWDEVICE_TYPE_RKMPP) {
+            r->hwdevice = av_buffer_ref(avctx->hw_device_ctx);
+            if (r->hwdevice)
+                av_log(avctx, AV_LOG_VERBOSE, "Picked up an existing RKMPP hardware device\n");
         }
-        av_log(avctx, AV_LOG_VERBOSE, "Picked up an existing RKMPP hardware device\n");
-    } else {
+    }
+    if (!r->hwdevice) {
         if ((ret = av_hwdevice_ctx_create(&r->hwdevice, AV_HWDEVICE_TYPE_RKMPP, NULL, NULL, 0)) < 0) {
             av_log(avctx, AV_LOG_ERROR, "Failed to create a RKMPP hardware device: %d\n", ret);
             goto fail;
