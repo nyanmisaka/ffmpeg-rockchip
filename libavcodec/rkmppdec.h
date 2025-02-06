@@ -41,7 +41,6 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 
-#define MAX_ERRINFO_COUNT   100
 #define MAX_SOC_NAME_LENGTH 128
 
 typedef struct RKMPPDecContext {
@@ -58,7 +57,6 @@ typedef struct RKMPPDecContext {
     int            eof;
     int            draining;
     int            info_change;
-    int            errinfo_cnt;
     int            got_frame;
     int            use_rfbc;
 
