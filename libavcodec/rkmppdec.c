@@ -148,7 +148,6 @@ static av_cold int rkmpp_decode_close(AVCodecContext *avctx)
     r->eof = 0;
     r->draining = 0;
     r->info_change = 0;
-    r->errinfo_cnt = 0;
     r->got_frame = 0;
     r->use_rfbc = 0;
 
@@ -754,7 +753,7 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
     }
     if (mpp_frame_get_errinfo(mpp_frame)) {
         av_log(avctx, AV_LOG_DEBUG, "Received a 'errinfo' frame\n");
-        ret = (r->errinfo_cnt++ > MAX_ERRINFO_COUNT) ? AVERROR_EXTERNAL : AVERROR(EAGAIN);
+        ret = AVERROR(EAGAIN);
         goto exit;
     }
 
@@ -827,7 +826,6 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
         goto exit;
     } else {
         av_log(avctx, AV_LOG_DEBUG, "Received a frame\n");
-        r->errinfo_cnt = 0;
         r->got_frame = 1;
 
         switch (avctx->pix_fmt) {
@@ -1017,7 +1015,6 @@ static void rkmpp_decode_flush(AVCodecContext *avctx)
         r->eof = 0;
         r->draining = 0;
         r->info_change = 0;
-        r->errinfo_cnt = 0;
         r->got_frame = 0;
 
         av_packet_unref(&r->last_pkt);
