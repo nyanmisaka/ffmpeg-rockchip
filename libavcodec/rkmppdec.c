@@ -1026,10 +1026,10 @@ static void rkmpp_decode_flush(AVCodecContext *avctx)
 DEFINE_RKMPP_DECODER(h263, H263, NULL)
 #endif
 #if CONFIG_H264_RKMPP_DECODER
-DEFINE_RKMPP_DECODER(h264, H264, "h264_mp4toannexb,dump_extra")
+DEFINE_RKMPP_DECODER(h264, H264, "h264_mp4toannexb")
 #endif
 #if CONFIG_HEVC_RKMPP_DECODER
-DEFINE_RKMPP_DECODER(hevc, HEVC, "hevc_mp4toannexb,dump_extra")
+DEFINE_RKMPP_DECODER(hevc, HEVC, "hevc_mp4toannexb")
 #endif
 #if CONFIG_VP8_RKMPP_DECODER
 DEFINE_RKMPP_DECODER(vp8, VP8, NULL)
