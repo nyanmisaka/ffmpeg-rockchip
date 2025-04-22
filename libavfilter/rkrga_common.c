@@ -694,6 +694,7 @@ static av_cold int init_hwframes_ctx(AVFilterContext *avctx)
     AVHWFramesContext *hwfc_out;
     AVBufferRef       *hwfc_out_ref;
     AVHWDeviceContext *device_ctx;
+    AVBufferRef       *device_ref;
     AVRKMPPFramesContext *rkmpp_fc;
     int                ret;
 
@@ -701,12 +702,21 @@ static av_cold int init_hwframes_ctx(AVFilterContext *avctx)
         return AVERROR(EINVAL);
 
     hwfc_in = (AVHWFramesContext *)inlink->hw_frames_ctx->data;
-    device_ctx = (AVHWDeviceContext *)hwfc_in->device_ref->data;
+    device_ref = hwfc_in->device_ref;
+    device_ctx = (AVHWDeviceContext *)device_ref->data;
 
-    if (!device_ctx || device_ctx->type != AV_HWDEVICE_TYPE_RKMPP)
-        return AVERROR(EINVAL);
+    if (!device_ctx || device_ctx->type != AV_HWDEVICE_TYPE_RKMPP) {
+        if (avctx->hw_device_ctx) {
+            device_ref = avctx->hw_device_ctx;
+            device_ctx = (AVHWDeviceContext *)device_ref->data;
+        }
+        if (!device_ctx || device_ctx->type != AV_HWDEVICE_TYPE_RKMPP) {
+            av_log(avctx, AV_LOG_ERROR, "No RKMPP hardware context provided\n");
+            return AVERROR(EINVAL);
+        }
+    }
 
-    hwfc_out_ref = av_hwframe_ctx_alloc(hwfc_in->device_ref);
+    hwfc_out_ref = av_hwframe_ctx_alloc(device_ref);
     if (!hwfc_out_ref)
         return AVERROR(ENOMEM);
 
@@ -741,6 +751,7 @@ static av_cold int init_pat_preproc_hwframes_ctx(AVFilterContext *avctx)
     AVHWFramesContext *hwfc_pat;
     AVBufferRef       *hwfc_pat_ref;
     AVHWDeviceContext *device_ctx0;
+    AVBufferRef       *device_ref0;
     int                ret;
 
     if (!inlink0->hw_frames_ctx || !inlink1->hw_frames_ctx)
@@ -748,12 +759,21 @@ static av_cold int init_pat_preproc_hwframes_ctx(AVFilterContext *avctx)
 
     hwfc_in0 = (AVHWFramesContext *)inlink0->hw_frames_ctx->data;
     hwfc_in1 = (AVHWFramesContext *)inlink1->hw_frames_ctx->data;
-    device_ctx0 = (AVHWDeviceContext *)hwfc_in0->device_ref->data;
+    device_ref0 = hwfc_in0->device_ref;
+    device_ctx0 = (AVHWDeviceContext *)device_ref0->data;
 
-    if (!device_ctx0 || device_ctx0->type != AV_HWDEVICE_TYPE_RKMPP)
-        return AVERROR(EINVAL);
+    if (!device_ctx0 || device_ctx0->type != AV_HWDEVICE_TYPE_RKMPP) {
+        if (avctx->hw_device_ctx) {
+            device_ref0 = avctx->hw_device_ctx;
+            device_ctx0 = (AVHWDeviceContext *)device_ref0->data;
+        }
+        if (!device_ctx0 || device_ctx0->type != AV_HWDEVICE_TYPE_RKMPP) {
+            av_log(avctx, AV_LOG_ERROR, "No RKMPP hardware context provided\n");
+            return AVERROR(EINVAL);
+        }
+    }
 
-    hwfc_pat_ref = av_hwframe_ctx_alloc(hwfc_in0->device_ref);
+    hwfc_pat_ref = av_hwframe_ctx_alloc(device_ref0);
     if (!hwfc_pat_ref)
         return AVERROR(ENOMEM);
 
