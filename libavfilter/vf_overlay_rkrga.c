@@ -366,4 +366,5 @@ const AVFilter ff_vf_overlay_rkrga = {
     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_DRM_PRIME),
     .preinit        = rgaoverlay_framesync_preinit,
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
+    .flags          = AVFILTER_FLAG_HWDEVICE,
 };

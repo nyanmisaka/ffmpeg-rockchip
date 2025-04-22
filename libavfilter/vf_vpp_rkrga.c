@@ -534,6 +534,7 @@ const AVFilter ff_vf_scale_rkrga = {
     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_DRM_PRIME),
     .activate       = rgavpp_activate,
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
+    .flags          = AVFILTER_FLAG_HWDEVICE,
 };
 
 #endif
@@ -574,6 +575,7 @@ const AVFilter ff_vf_vpp_rkrga = {
     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_DRM_PRIME),
     .activate       = rgavpp_activate,
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
+    .flags          = AVFILTER_FLAG_HWDEVICE,
 };
 
 #endif
