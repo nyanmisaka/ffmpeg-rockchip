@@ -37,6 +37,7 @@
 #include "libavutil/hwcontext_rkmpp.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "libavutil/uuid.h"
 
 #define H26X_HEADER_SIZE   1024
 #define H26X_ASYNC_FRAMES  4
@@ -46,6 +47,9 @@
 typedef struct MPPEncFrame {
     AVFrame            *frame;
     MppFrame            mpp_frame;
+    MppEncUserDataSet   mpp_sei_set;
+    MppEncUserDataFull *mpp_sei;
+    int                 mpp_sei_sz;
     struct MPPEncFrame *next;
     int                 queued;
 } MPPEncFrame;
@@ -78,6 +82,8 @@ typedef struct RKMPPEncContext {
     int                level;
     int                coder;
     int                dct8x8;
+    int                udu_sei;
+    int                prefix_mode;
 } RKMPPEncContext;
 
 static const AVRational mpp_tb = { 1, 1000000 };
@@ -143,6 +149,10 @@ static const AVOption h264_options[] = {
         { "cabac", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, INT_MIN, INT_MAX, VE, "coder" },
     { "8x8dct", "Set the high profile 8x8 transform", OFFSET(dct8x8), AV_OPT_TYPE_BOOL,
             { .i64 = 1 }, 0, 1, VE, "8x8dct" },
+    { "udu_sei", "Pass on user data unregistered SEI if available", OFFSET(udu_sei), AV_OPT_TYPE_BOOL,
+            { .i64 = 0 }, 0, 1, VE, "udu_sei" },
+    { "prefix_mode", "Add prefix NAL between SEI info and encoded bitstream data", OFFSET(prefix_mode), AV_OPT_TYPE_BOOL,
+            { .i64 = 0 }, 0, 1, VE, "prefix_mode" },
     { NULL },
 };
 
@@ -170,6 +180,8 @@ static const AVOption hevc_options[] = {
         { "6",          NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 180 }, 0, 0, VE, "level" },
         { "6.1",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 183 }, 0, 0, VE, "level" },
         { "6.2",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 186 }, 0, 0, VE, "level" },
+    { "udu_sei", "Pass on user data unregistered SEI if available", OFFSET(udu_sei), AV_OPT_TYPE_BOOL,
+            { .i64 = 0 }, 0, 1, VE, "udu_sei" },
     { NULL },
 };
 

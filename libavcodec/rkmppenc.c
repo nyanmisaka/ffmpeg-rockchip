@@ -182,6 +182,9 @@ static void clear_unused_frames(MPPEncFrame *list)
                 mpp_frame_deinit(&list->mpp_frame);
                 list->mpp_frame = NULL;
 
+                av_freep(&list->mpp_sei);
+                list->mpp_sei_sz = 0;
+
                 av_frame_free(&list->frame);
                 list->queued = 0;
             }
@@ -210,6 +213,9 @@ static void clear_frame_list(MPPEncFrame **list)
             mpp_frame_deinit(&frame->mpp_frame);
             frame->mpp_frame = NULL;
         }
+
+        av_freep(&frame->mpp_sei);
+        frame->mpp_sei_sz = 0;
 
         av_frame_free(&frame->frame);
         av_freep(&frame);
@@ -492,6 +498,8 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
             mpp_enc_cfg_set_s32(cfg, "h264:trans8x8",
                                 (r->dct8x8 && avctx->profile == AV_PROFILE_H264_HIGH));
 
+            mpp_enc_cfg_set_s32(cfg, "h264:prefix_mode", r->prefix_mode);
+
             switch (avctx->profile) {
             case AV_PROFILE_H264_BASELINE:
                 av_log(avctx, AV_LOG_VERBOSE, "Profile is set to BASELINE\n"); break;
@@ -541,7 +549,7 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
 
     if (avctx->codec_id == AV_CODEC_ID_H264 ||
         avctx->codec_id == AV_CODEC_ID_HEVC) {
-        sei_mode = MPP_ENC_SEI_MODE_DISABLE;
+        sei_mode = r->udu_sei ? MPP_ENC_SEI_MODE_ONE_FRAME : MPP_ENC_SEI_MODE_DISABLE;
         if ((ret = r->mapi->control(r->mctx, MPP_ENC_SET_SEI_CFG, &sei_mode)) != MPP_OK) {
             av_log(avctx, AV_LOG_ERROR, "Failed to set SEI config: %d\n", ret);
             return AVERROR_EXTERNAL;
@@ -551,6 +559,70 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
                       ? MPP_ENC_HEADER_MODE_DEFAULT : MPP_ENC_HEADER_MODE_EACH_IDR;
         if ((ret = r->mapi->control(r->mctx, MPP_ENC_SET_HEADER_MODE, &header_mode)) != MPP_OK) {
             av_log(avctx, AV_LOG_ERROR, "Failed to set header mode: %d\n", ret);
+            return AVERROR_EXTERNAL;
+        }
+    }
+
+    return 0;
+}
+
+static int rkmpp_prepare_udu_sei_data(AVCodecContext *avctx, MPPEncFrame *mpp_enc_frame)
+{
+    int i, ret, sei_count = 0;
+
+    if (!mpp_enc_frame ||
+        !mpp_enc_frame->frame ||
+        !mpp_enc_frame->mpp_frame)
+        return AVERROR(EINVAL);
+
+    /* user data unregistered SEI of H26X */
+    for (i = 0; i < mpp_enc_frame->frame->nb_side_data; i++) {
+        AVFrameSideData *sd = mpp_enc_frame->frame->side_data[i];
+        uint8_t *user_data = sd->data;
+        void *buf = NULL;
+
+        if (sd->type != AV_FRAME_DATA_SEI_UNREGISTERED)
+            continue;
+
+        if (sd->size < AV_UUID_LEN) {
+            av_log(avctx, AV_LOG_WARNING, "Invalid UDU SEI data: "
+                   "(%"SIZE_SPECIFIER" < UUID(%d-bytes)), skipping\n",
+                   sd->size, AV_UUID_LEN);
+            continue;
+        }
+
+        buf = av_fast_realloc(mpp_enc_frame->mpp_sei,
+                              &mpp_enc_frame->mpp_sei_sz,
+                              (sei_count + 1) * sizeof(*(mpp_enc_frame->mpp_sei)));
+        if (!buf) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to realloc UDU SEI buffer\n");
+            return AVERROR(ENOMEM);
+        } else {
+            mpp_enc_frame->mpp_sei = buf;
+
+            mpp_enc_frame->mpp_sei[sei_count].len   = sd->size - AV_UUID_LEN;
+            mpp_enc_frame->mpp_sei[sei_count].uuid  = (RK_U8 *)user_data;
+            mpp_enc_frame->mpp_sei[sei_count].pdata = &user_data[AV_UUID_LEN];
+
+            ++sei_count;
+        }
+    }
+
+    if (sei_count > 0) {
+        MppMeta mpp_meta = NULL;
+        MppEncUserDataSet *mpp_sei_set = &mpp_enc_frame->mpp_sei_set;
+
+        mpp_sei_set->datas = mpp_enc_frame->mpp_sei;
+        mpp_sei_set->count = sei_count;
+
+        mpp_meta = mpp_frame_get_meta(mpp_enc_frame->mpp_frame);
+        if (!mpp_meta) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to get frame meta\n");
+            return AVERROR_EXTERNAL;
+        }
+        if ((ret = mpp_meta_set_ptr(mpp_meta, KEY_USER_DATAS,
+                                    mpp_sei_set)) != MPP_OK) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to set the UDU SEI datas ptr\n");
             return AVERROR_EXTERNAL;
         }
     }
@@ -727,6 +799,14 @@ static MPPEncFrame *rkmpp_submit_frame(AVCodecContext *avctx, AVFrame *frame)
     }
     mpp_frame_set_buffer(mpp_frame, mpp_buf);
     mpp_frame_set_buf_size(mpp_frame, drm_desc->objects[0].size);
+
+    if (r->udu_sei &&
+        (avctx->codec_id == AV_CODEC_ID_H264 ||
+         avctx->codec_id == AV_CODEC_ID_HEVC)) {
+        ret = rkmpp_prepare_udu_sei_data(avctx, mpp_enc_frame);
+        if (ret < 0)
+            goto exit;
+    }
 
     return mpp_enc_frame;
 
