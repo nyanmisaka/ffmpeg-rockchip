@@ -48,8 +48,6 @@ typedef struct MPPEncFrame {
     AVFrame            *frame;
     MppFrame            mpp_frame;
     MppEncUserDataSet   mpp_sei_set;
-    MppEncUserDataFull *mpp_sei;
-    int                 mpp_sei_sz;
     struct MPPEncFrame *next;
     int                 queued;
 } MPPEncFrame;
