@@ -145,6 +145,7 @@ static av_cold int rkmpp_decode_close(AVCodecContext *avctx)
 {
     RKMPPDecContext *r = avctx->priv_data;
 
+    r->last_pts = AV_NOPTS_VALUE;
     r->eof = 0;
     r->draining = 0;
     r->info_change = 0;
@@ -912,7 +913,8 @@ static int rkmpp_send_packet(AVCodecContext *avctx, AVPacket *pkt)
 {
     RKMPPDecContext *r = avctx->priv_data;
     MppPacket mpp_pkt = NULL;
-    int64_t pts = PTS_TO_MPP_PTS(pkt->pts, avctx->pkt_timebase);
+    int64_t mpp_pkt_pts = PTS_TO_MPP_PTS(pkt->pts, avctx->pkt_timebase);
+    int64_t last_pts = r->last_pts;
     int ret;
 
     /* avoid sending new data after EOS */
@@ -928,17 +930,39 @@ static int rkmpp_send_packet(AVCodecContext *avctx, AVPacket *pkt)
         return 0;
     }
 
+    /* make up some pts if it's not available from pkt */
+    if (pkt->pts == AV_NOPTS_VALUE) {
+        int64_t pts_diff = 1;
+        AVRational framerate = { avctx->framerate.num,
+                                 avctx->framerate.den };
+
+        if (avctx->pkt_timebase.num && avctx->pkt_timebase.den) {
+            if (!(framerate.num && framerate.den)) {
+                framerate.num = 25;
+                framerate.den = 1;
+            }
+            pts_diff = (avctx->pkt_timebase.den * framerate.den) /
+                       (avctx->pkt_timebase.num * framerate.num);
+        }
+        last_pts += pts_diff;
+
+        mpp_pkt_pts = PTS_TO_MPP_PTS(last_pts, avctx->pkt_timebase);
+    }
+
     if ((ret = mpp_packet_init(&mpp_pkt, pkt->data, pkt->size)) != MPP_OK) {
         av_log(avctx, AV_LOG_ERROR, "Failed to init packet: %d\n", ret);
         return AVERROR_EXTERNAL;
     }
-    mpp_packet_set_pts(mpp_pkt, pts);
+    mpp_packet_set_pts(mpp_pkt, mpp_pkt_pts);
 
     if ((ret = r->mapi->decode_put_packet(r->mctx, mpp_pkt)) != MPP_OK) {
         av_log(avctx, AV_LOG_TRACE, "Decoder buffer is full\n");
         mpp_packet_deinit(&mpp_pkt);
         return AVERROR(EAGAIN);
     }
+    /* update the last pts */
+    r->last_pts = pkt->pts == AV_NOPTS_VALUE ? last_pts : pkt->pts;
+
     av_log(avctx, AV_LOG_DEBUG, "Wrote %d bytes to decoder\n", pkt->size);
 
     mpp_packet_deinit(&mpp_pkt);
