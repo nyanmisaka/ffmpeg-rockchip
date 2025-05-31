@@ -29,6 +29,7 @@ The documentation is available on the [Wiki](https://github.com/nyanmisaka/ffmpe
  V..... h263_rkmpp           Rockchip MPP (Media Process Platform) H263 decoder (codec h263)
  V..... h264_rkmpp           Rockchip MPP (Media Process Platform) H264 decoder (codec h264)
  V..... hevc_rkmpp           Rockchip MPP (Media Process Platform) HEVC decoder (codec hevc)
+ V..... mjpeg_rkmpp          Rockchip MPP (Media Process Platform) MJPEG decoder (codec mjpeg)
  V..... mpeg1_rkmpp          Rockchip MPP (Media Process Platform) MPEG1VIDEO decoder (codec mpeg1video)
  V..... mpeg2_rkmpp          Rockchip MPP (Media Process Platform) MPEG2VIDEO decoder (codec mpeg2video)
  V..... mpeg4_rkmpp          Rockchip MPP (Media Process Platform) MPEG4 decoder (codec mpeg4)
@@ -81,7 +82,6 @@ The documentation is available on the [Wiki](https://github.com/nyanmisaka/ffmpe
 ```
 
 ## Todo
-* Support MPP MJPEG/JPEG decoder
 * Support MPP VP8 video encoder
 * ...
 
