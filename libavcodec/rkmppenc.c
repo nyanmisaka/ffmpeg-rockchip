@@ -73,9 +73,19 @@ static MppFrameFormat rkmpp_get_mpp_fmt_mjpeg(enum AVPixelFormat pix_fmt)
     switch (pix_fmt) {
     case AV_PIX_FMT_YUVJ420P:
     case AV_PIX_FMT_YUV420P:   return MPP_FMT_YUV420P;
+    case AV_PIX_FMT_YUVJ422P:
+    case AV_PIX_FMT_YUV422P:   return MPP_FMT_YUV422P;     /* RK3576+ only */
+    case AV_PIX_FMT_YUVJ444P:
+    case AV_PIX_FMT_YUV444P:   return MPP_FMT_YUV444P;     /* RK3576+ only */
     case AV_PIX_FMT_NV12:      return MPP_FMT_YUV420SP;
+    case AV_PIX_FMT_NV21:      return MPP_FMT_YUV420SP_VU; /* RK3576+ only */
+    case AV_PIX_FMT_NV16:      return MPP_FMT_YUV422SP;    /* RK3576+ only */
+    case AV_PIX_FMT_NV24:      return MPP_FMT_YUV444SP;    /* RK3576+ only */
     case AV_PIX_FMT_YUYV422:   return MPP_FMT_YUV422_YUYV;
     case AV_PIX_FMT_UYVY422:   return MPP_FMT_YUV422_UYVY;
+    case AV_PIX_FMT_YVYU422:   return MPP_FMT_YUV422_YVYU; /* RK3576+ only */
+
+    /* RGB: pre-RK3576 only */
     case AV_PIX_FMT_RGB444BE:  return MPP_FMT_RGB444;
     case AV_PIX_FMT_BGR444BE:  return MPP_FMT_BGR444;
     case AV_PIX_FMT_RGB555BE:  return MPP_FMT_RGB555;
@@ -102,6 +112,38 @@ static uint32_t rkmpp_get_drm_afbc_format(MppFrameFormat mpp_fmt)
     case MPP_FMT_YUV420SP: return DRM_FORMAT_YUV420_8BIT;
     case MPP_FMT_YUV422SP: return DRM_FORMAT_YUYV;
     default:               return DRM_FORMAT_INVALID;
+    }
+}
+
+static MppFrameChromaFormat rkmpp_fix_chroma_fmt(int chroma_fmt,
+                                                 enum AVPixelFormat pix_fmt)
+{
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(pix_fmt);
+    int log2_chroma_sum = desc->log2_chroma_w + desc->log2_chroma_h;
+    int is_yuv = !(desc->flags & AV_PIX_FMT_FLAG_RGB) &&
+                 desc->nb_components >= 2;
+
+    if (!is_yuv)
+        return MPP_CHROMA_UNSPECIFIED;
+
+    switch (chroma_fmt) {
+    case -1:
+        return log2_chroma_sum == 0 ? MPP_CHROMA_444 :
+               log2_chroma_sum == 1 ? MPP_CHROMA_422 :
+                                      MPP_CHROMA_UNSPECIFIED;
+    case MPP_CHROMA_400:
+        return chroma_fmt;
+    case MPP_CHROMA_420:
+        return log2_chroma_sum <= 2 ?
+            chroma_fmt : MPP_CHROMA_UNSPECIFIED;
+    case MPP_CHROMA_422:
+        return log2_chroma_sum <= 1 ?
+            chroma_fmt : MPP_CHROMA_UNSPECIFIED;
+    case MPP_CHROMA_444:
+        return log2_chroma_sum == 0 ?
+            chroma_fmt : MPP_CHROMA_UNSPECIFIED;
+    default:
+        return MPP_CHROMA_UNSPECIFIED;
     }
 }
 
@@ -310,6 +352,12 @@ static int rkmpp_set_enc_cfg_prep(AVCodecContext *avctx, AVFrame *frame)
         mpp_enc_cfg_set_s32(cfg, "prep:colorrange", AVCOL_RANGE_JPEG);
     }
 
+    if (avctx->codec_id == AV_CODEC_ID_MJPEG) {
+        /* always output full range if the MJPEG encoder supports CSC */
+        mpp_enc_cfg_set_s32(cfg, "prep:range_out", AVCOL_RANGE_JPEG);
+        mpp_enc_cfg_set_s32(cfg, "prep:format_out", rkmpp_fix_chroma_fmt(r->chroma_fmt, r->pix_fmt));
+    }
+
     if (is_afbc) {
         const AVDRMLayerDescriptor *layer = &drm_desc->layers[0];
         uint32_t drm_afbc_fmt = rkmpp_get_drm_afbc_format(mpp_fmt);
@@ -366,6 +414,12 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
         r->pix_fmt == AV_PIX_FMT_YUVJ422P ||
         r->pix_fmt == AV_PIX_FMT_YUVJ444P) {
         mpp_enc_cfg_set_s32(cfg, "prep:colorrange", AVCOL_RANGE_JPEG);
+    }
+
+    if (avctx->codec_id == AV_CODEC_ID_MJPEG) {
+        /* always output full range if the MJPEG encoder supports CSC */
+        mpp_enc_cfg_set_s32(cfg, "prep:range_out", AVCOL_RANGE_JPEG);
+        mpp_enc_cfg_set_s32(cfg, "prep:format_out", rkmpp_fix_chroma_fmt(r->chroma_fmt, r->pix_fmt));
     }
 
     if (avctx->framerate.den > 0 && avctx->framerate.num > 0)
