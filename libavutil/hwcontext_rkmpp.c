@@ -460,7 +460,6 @@ static int rkmpp_map_frame(AVHWFramesContext *hwfc,
 
     dst->width  = src->width;
     dst->height = src->height;
-    dst->hw_frames_ctx = NULL;
 
     err = ff_hwframe_map_create(src->hw_frames_ctx, dst, src,
                                 &rkmpp_unmap_frame, map);
