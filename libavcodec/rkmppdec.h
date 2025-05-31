@@ -53,6 +53,7 @@ typedef struct RKMPPDecContext {
     AVBufferRef   *hwdevice;
     AVBufferRef   *hwframe;
 
+    int64_t        last_pts;
     AVPacket       last_pkt;
     int            eof;
     int            draining;
