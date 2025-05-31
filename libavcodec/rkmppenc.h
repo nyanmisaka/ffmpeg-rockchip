@@ -82,6 +82,7 @@ typedef struct RKMPPEncContext {
     int                dct8x8;
     int                udu_sei;
     int                prefix_mode;
+    int                chroma_fmt;
 } RKMPPEncContext;
 
 static const AVRational mpp_tb = { 1, 1000000 };
@@ -190,6 +191,13 @@ static const AVOption mjpeg_options[] = {
             { .i64 = -1 }, -1, 99, VE, "qp_max" }, \
     { "qp_min", "Set the min QP/Q_Factor value", OFFSET(qp_min), AV_OPT_TYPE_INT, \
             { .i64 = -1 }, -1, 99, VE, "qp_min" }, \
+    { "chroma_fmt", "Specify the output chroma format for down subsampling", OFFSET(chroma_fmt), AV_OPT_TYPE_INT, \
+            { .i64 = MPP_CHROMA_UNSPECIFIED }, -1, MPP_CHROMA_444, VE, .unit = "chroma_fmt" }, \
+        { "auto", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = -1 }, 0, 0, VE, .unit = "chroma_fmt" },
+        { "400",  NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MPP_CHROMA_400 }, 0, 0, VE, .unit = "chroma_fmt" },
+        { "420",  NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MPP_CHROMA_420 }, 0, 0, VE, .unit = "chroma_fmt" },
+        { "422",  NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MPP_CHROMA_422 }, 0, 0, VE, .unit = "chroma_fmt" },
+        { "444",  NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MPP_CHROMA_444 }, 0, 0, VE, .unit = "chroma_fmt" },
     { NULL },
 };
 
@@ -225,9 +233,19 @@ static const enum AVPixelFormat rkmpp_enc_pix_fmts_h26x[] = {
 static const enum AVPixelFormat rkmpp_enc_pix_fmts_mjpeg[] = {
     AV_PIX_FMT_YUV420P,
     AV_PIX_FMT_YUVJ420P,
+    AV_PIX_FMT_YUV422P,  /* RK3576+ only */
+    AV_PIX_FMT_YUVJ422P,
+    AV_PIX_FMT_YUV444P,  /* RK3576+ only */
+    AV_PIX_FMT_YUVJ444P,
     AV_PIX_FMT_NV12,
+    AV_PIX_FMT_NV21,     /* RK3576+ only */
+    AV_PIX_FMT_NV16,     /* RK3576+ only */
+    AV_PIX_FMT_NV24,     /* RK3576+ only */
     AV_PIX_FMT_YUYV422,
     AV_PIX_FMT_UYVY422,
+    AV_PIX_FMT_YVYU422,  /* RK3576+ only */
+
+    /* RGB: pre-RK3576 only */
     AV_PIX_FMT_RGB444BE,
     AV_PIX_FMT_BGR444BE,
     AV_PIX_FMT_RGB555BE,
