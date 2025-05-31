@@ -110,6 +110,7 @@ typedef struct RKRGAParam {
 
     int in_rotate_mode;
     int in_global_alpha;
+    int in_alpha_format;
 
     int in_crop;
     int in_crop_x;
