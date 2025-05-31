@@ -357,6 +357,17 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
     mpp_enc_cfg_set_s32(cfg, "prep:rotation", 0);
     mpp_enc_cfg_set_s32(cfg, "prep:flip", 0);
 
+    mpp_enc_cfg_set_s32(cfg, "prep:colorspace", avctx->colorspace);
+    mpp_enc_cfg_set_s32(cfg, "prep:colorprim", avctx->color_primaries);
+    mpp_enc_cfg_set_s32(cfg, "prep:colortrc", avctx->color_trc);
+
+    mpp_enc_cfg_set_s32(cfg, "prep:colorrange", avctx->color_range);
+    if (r->pix_fmt == AV_PIX_FMT_YUVJ420P ||
+        r->pix_fmt == AV_PIX_FMT_YUVJ422P ||
+        r->pix_fmt == AV_PIX_FMT_YUVJ444P) {
+        mpp_enc_cfg_set_s32(cfg, "prep:colorrange", AVCOL_RANGE_JPEG);
+    }
+
     if (avctx->framerate.den > 0 && avctx->framerate.num > 0)
         av_reduce(&fps_num, &fps_den, avctx->framerate.num, avctx->framerate.den, 65535);
     else
