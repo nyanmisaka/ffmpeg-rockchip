@@ -52,6 +52,7 @@ typedef struct RGAOverlayContext {
     double var_values[VAR_VARS_NB];
     char *overlay_ox, *overlay_oy;
     int global_alpha;
+    int alpha_format;
     enum AVPixelFormat format;
 } RGAOverlayContext;
 
@@ -195,6 +196,7 @@ static av_cold int rgaoverlay_config_props(AVFilterLink *outlink)
     param.filter_frame    = NULL;
     param.out_sw_format   = out_format;
     param.in_global_alpha = r->global_alpha;
+    param.in_alpha_format = r->alpha_format;
     param.overlay_x       = r->var_values[VAR_OX];
     param.overlay_y       = r->var_values[VAR_OY];
 
@@ -312,6 +314,9 @@ static const AVOption rgaoverlay_options[] = {
     { "x", "Overlay x position", OFFSET(overlay_ox), AV_OPT_TYPE_STRING, { .str = "0" }, 0, 0, .flags = FLAGS },
     { "y", "Overlay y position", OFFSET(overlay_oy), AV_OPT_TYPE_STRING, { .str = "0" }, 0, 0, .flags = FLAGS },
     { "alpha", "Overlay global alpha", OFFSET(global_alpha), AV_OPT_TYPE_INT, { .i64 = 255 }, 0, 255, .flags = FLAGS },
+    { "alpha_format", "alpha format", OFFSET(alpha_format), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, FLAGS, "alpha_format" },
+        { "straight",      "The overlay input is unpremultiplied", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, .flags = FLAGS, "alpha_format" },
+        { "premultiplied", "The overlay input is premultiplied",   0, AV_OPT_TYPE_CONST, { .i64 = 1 }, .flags = FLAGS, "alpha_format" },
     { "format", "Output video pixel format", OFFSET(format), AV_OPT_TYPE_PIXEL_FMT, { .i64 = AV_PIX_FMT_NONE }, INT_MIN, INT_MAX, .flags = FLAGS },
     { "eof_action", "Action to take when encountering EOF from secondary input ",
         OFFSET(fs.opt_eof_action), AV_OPT_TYPE_INT, { .i64 = EOF_ACTION_REPEAT },
