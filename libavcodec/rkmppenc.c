@@ -341,7 +341,11 @@ static int rkmpp_set_enc_cfg_prep(AVCodecContext *avctx, AVFrame *frame)
     mpp_enc_cfg_set_s32(cfg, "prep:width", avctx->width);
     mpp_enc_cfg_set_s32(cfg, "prep:height", avctx->height);
 
-    mpp_enc_cfg_set_s32(cfg, "prep:colorspace", avctx->colorspace);
+    if (pix_desc->flags & AV_PIX_FMT_FLAG_RGB) /* RGB -> BT709 CSC */
+        mpp_enc_cfg_set_s32(cfg, "prep:colorspace", AVCOL_SPC_BT709);
+    else
+        mpp_enc_cfg_set_s32(cfg, "prep:colorspace", avctx->colorspace);
+
     mpp_enc_cfg_set_s32(cfg, "prep:colorprim", avctx->color_primaries);
     mpp_enc_cfg_set_s32(cfg, "prep:colortrc", avctx->color_trc);
 
@@ -388,7 +392,7 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
 {
     RKMPPEncContext *r = avctx->priv_data;
     MppEncCfg cfg = r->mcfg;
-
+    const AVPixFmtDescriptor *pix_desc;
     RK_U32 rc_mode, fps_num, fps_den;
     MppEncHeaderMode header_mode;
     MppEncSeiMode sei_mode;
@@ -400,12 +404,17 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
     mpp_enc_cfg_set_s32(cfg, "prep:height", avctx->height);
     mpp_enc_cfg_set_s32(cfg, "prep:hor_stride", FFALIGN(avctx->width, 64));
     mpp_enc_cfg_set_s32(cfg, "prep:ver_stride", FFALIGN(avctx->height, 64));
-    mpp_enc_cfg_set_s32(cfg, "prep:format", MPP_FMT_YUV420SP);
+    mpp_enc_cfg_set_s32(cfg, "prep:format", r->mpp_fmt);
     mpp_enc_cfg_set_s32(cfg, "prep:mirroring", 0);
     mpp_enc_cfg_set_s32(cfg, "prep:rotation", 0);
     mpp_enc_cfg_set_s32(cfg, "prep:flip", 0);
 
-    mpp_enc_cfg_set_s32(cfg, "prep:colorspace", avctx->colorspace);
+    pix_desc = av_pix_fmt_desc_get(r->pix_fmt);
+    if (pix_desc->flags & AV_PIX_FMT_FLAG_RGB) /* RGB -> BT709 CSC */
+        mpp_enc_cfg_set_s32(cfg, "prep:colorspace", AVCOL_SPC_BT709);
+    else
+        mpp_enc_cfg_set_s32(cfg, "prep:colorspace", avctx->colorspace);
+
     mpp_enc_cfg_set_s32(cfg, "prep:colorprim", avctx->color_primaries);
     mpp_enc_cfg_set_s32(cfg, "prep:colortrc", avctx->color_trc);
 
