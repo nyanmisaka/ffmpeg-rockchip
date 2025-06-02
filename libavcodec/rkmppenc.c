@@ -741,6 +741,8 @@ static MPPEncFrame *rkmpp_submit_frame(AVCodecContext *avctx, AVFrame *frame)
         drm_frame = frame;
         mpp_enc_frame->frame = av_frame_clone(drm_frame);
     } else {
+        AVBufferRef *hw_frames_ctx = frame->hw_frames_ctx;
+
         drm_frame = av_frame_alloc();
         if (!drm_frame) {
             goto exit;
@@ -749,15 +751,19 @@ static MPPEncFrame *rkmpp_submit_frame(AVCodecContext *avctx, AVFrame *frame)
             av_log(avctx, AV_LOG_ERROR, "Cannot allocate an internal frame: %d\n", ret);
             goto exit;
         }
+        frame->hw_frames_ctx = NULL; /* clear hwfc to avoid HW -> HW transfer */
         if ((ret = av_hwframe_transfer_data(drm_frame, frame, 0)) < 0) {
             av_log(avctx, AV_LOG_ERROR, "av_hwframe_transfer_data failed: %d\n", ret);
+            frame->hw_frames_ctx = hw_frames_ctx;
             goto exit;
         }
         if ((ret = av_frame_copy_props(drm_frame, frame)) < 0) {
             av_log(avctx, AV_LOG_ERROR, "av_frame_copy_props failed: %d\n", ret);
+            frame->hw_frames_ctx = hw_frames_ctx;
             goto exit;
         }
         mpp_enc_frame->frame = drm_frame;
+        frame->hw_frames_ctx = hw_frames_ctx; /* restore hwfc */
     }
 
     drm_desc = (AVDRMFrameDescriptor *)drm_frame->data[0];
