@@ -163,6 +163,10 @@ static av_cold int rkmpp_decode_close(AVCodecContext *avctx)
         mpp_buffer_group_put(r->buf_group);
         r->buf_group = NULL;
     }
+    if (r->buf_group_misc) {
+        mpp_buffer_group_put(r->buf_group_misc);
+        r->buf_group_misc = NULL;
+    }
 
     if (r->hwframe)
         av_buffer_unref(&r->hwframe);
@@ -186,9 +190,6 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
     opts_env = getenv("FFMPEG_RKMPP_DEC_OPT");
     if (opts_env && av_set_options_string(r, opts_env, "=", " ") <= 0)
         av_log(avctx, AV_LOG_WARNING, "Unable to set decoder options from env\n");
-
-    if (avctx->codec_id == AV_CODEC_ID_MJPEG)
-        r->buf_mode = RKMPP_DEC_HALF_INTERNAL;
 
     switch (avctx->pix_fmt) {
     case AV_PIX_FMT_YUV420P:
@@ -267,6 +268,20 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
         av_log(avctx, AV_LOG_ERROR, "Failed to init MPP context: %d\n", ret);
         ret = AVERROR_EXTERNAL;
         goto fail;
+    }
+
+    if (avctx->codec_id == AV_CODEC_ID_MJPEG) {
+        r->buf_mode = RKMPP_DEC_HALF_INTERNAL;
+
+        /* Misc buffer group: for info change frame and bitstream only */
+        ret = mpp_buffer_group_get_internal(&r->buf_group_misc, MPP_BUFFER_TYPE_DRM |
+                                                                MPP_BUFFER_FLAGS_DMA32 |
+                                                                MPP_BUFFER_FLAGS_CACHABLE);
+        if (ret != MPP_OK) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to get MPP internal buffer group for Misc: %d\n", ret);
+            ret = AVERROR_EXTERNAL;
+            goto fail;
+        }
     }
 
     if (avctx->skip_frame == AVDISCARD_NONKEY)
@@ -972,18 +987,21 @@ static int rkmpp_send_eos(AVCodecContext *avctx)
 static int rkmpp_mjpeg_put_packet(AVCodecContext *avctx, MppPacket mpp_pkt_with_buf)
 {
     RKMPPDecContext *r = avctx->priv_data;
+    MppBufferGroup buf_group = r->buf_group ? r->buf_group : r->buf_group_misc;
     MppBuffer mpp_buf = NULL;
     MppFrame mpp_frame = NULL;
     MppMeta pkt_meta = NULL;
     size_t buf_sz = FFALIGN(avctx->width, 16) * FFALIGN(avctx->height, 16) << 2;
     int ret;
 
+    av_assert0(buf_group);
+
     if ((ret = mpp_frame_init(&mpp_frame)) != MPP_OK) {
         av_log(avctx, AV_LOG_ERROR, "Failed to init MPP frame: %d\n", ret);
         ret = MPP_ERR_UNKNOW;
         goto fail;
     }
-    if ((ret = mpp_buffer_get(r->buf_group, &mpp_buf, buf_sz)) != MPP_OK) {
+    if ((ret = mpp_buffer_get(buf_group, &mpp_buf, buf_sz)) != MPP_OK) {
         av_log(avctx, AV_LOG_ERROR, "Failed to get buffer for frame: %d\n", ret);
         ret = MPP_ERR_UNKNOW;
         goto fail;
@@ -1063,9 +1081,11 @@ static int rkmpp_send_packet(AVCodecContext *avctx, AVPacket *pkt)
     if (avctx->codec_id == AV_CODEC_ID_MJPEG) {
         MppBuffer mpp_buf = NULL;
 
+        av_assert0(r->buf_group_misc);
+
         /* the input slot of the MJPEG decoder must be a DRM/DMA buffer,
          * so borrow some from the frame buffer to write the pkt data */
-        if ((ret = mpp_buffer_get(r->buf_group, &mpp_buf, pkt->size)) != MPP_OK) {
+        if ((ret = mpp_buffer_get(r->buf_group_misc, &mpp_buf, pkt->size)) != MPP_OK) {
             av_log(avctx, AV_LOG_ERROR, "Failed to get buffer for packet: %d\n", ret);
             return AVERROR_EXTERNAL;
         }
