@@ -35,6 +35,7 @@
 #include "hwconfig.h"
 #include "internal.h"
 
+#include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
 #include "libavutil/hwcontext_rkmpp.h"
 #include "libavutil/mastering_display_metadata.h"
@@ -49,6 +50,7 @@ typedef struct RKMPPDecContext {
     MppApi        *mapi;
     MppCtx         mctx;
     MppBufferGroup buf_group;
+    MppBufferGroup buf_group_misc;
 
     AVBufferRef   *hwdevice;
     AVBufferRef   *hwframe;
