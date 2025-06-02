@@ -192,12 +192,12 @@ static const AVOption mjpeg_options[] = {
     { "qp_min", "Set the min QP/Q_Factor value", OFFSET(qp_min), AV_OPT_TYPE_INT, \
             { .i64 = -1 }, -1, 99, VE, "qp_min" }, \
     { "chroma_fmt", "Specify the output chroma format for down subsampling", OFFSET(chroma_fmt), AV_OPT_TYPE_INT, \
-            { .i64 = MPP_CHROMA_UNSPECIFIED }, -1, MPP_CHROMA_444, VE, .unit = "chroma_fmt" }, \
-        { "auto", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = -1 }, 0, 0, VE, .unit = "chroma_fmt" },
-        { "400",  NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MPP_CHROMA_400 }, 0, 0, VE, .unit = "chroma_fmt" },
-        { "420",  NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MPP_CHROMA_420 }, 0, 0, VE, .unit = "chroma_fmt" },
-        { "422",  NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MPP_CHROMA_422 }, 0, 0, VE, .unit = "chroma_fmt" },
-        { "444",  NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MPP_CHROMA_444 }, 0, 0, VE, .unit = "chroma_fmt" },
+            { .i64 = MPP_CHROMA_UNSPECIFIED }, -1, MPP_CHROMA_444, VE, "chroma_fmt" }, \
+        { "auto", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = -1 }, 0, 0, VE, "chroma_fmt" },
+        { "400",  NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MPP_CHROMA_400 }, 0, 0, VE, "chroma_fmt" },
+        { "420",  NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MPP_CHROMA_420 }, 0, 0, VE, "chroma_fmt" },
+        { "422",  NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MPP_CHROMA_422 }, 0, 0, VE, "chroma_fmt" },
+        { "444",  NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MPP_CHROMA_444 }, 0, 0, VE, "chroma_fmt" },
     { NULL },
 };
 
