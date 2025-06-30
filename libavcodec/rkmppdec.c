@@ -857,6 +857,8 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
 
         if (av_opt_serialize(r, 0, 0, &opts, '=', ' ') >= 0)
             av_log(avctx, AV_LOG_VERBOSE, "Decoder options: %s\n", opts);
+        if (opts)
+            av_freep(&opts);
 
         av_log(avctx, AV_LOG_VERBOSE, "Configured with size: %dx%d | pix_fmt: %s | sw_pix_fmt: %s\n",
                avctx->width, avctx->height,
