@@ -1237,6 +1237,9 @@ av_cold int ff_rkrga_close(AVFilterContext *avctx)
 
     clear_frame_list(&r->pat_preproc_frame_list);
 
+    if (r->in_rga_frame_infos)
+        av_freep(&r->in_rga_frame_infos);
+
     av_fifo_freep2(&r->async_fifo);
 
     av_buffer_unref(&r->pat_preproc_hwframes_ctx);
