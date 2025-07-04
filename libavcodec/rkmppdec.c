@@ -783,9 +783,15 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
     else
         ret = r->mapi->decode_get_frame(r->mctx, &mpp_frame);
 
-    if (ret != MPP_OK && ret != MPP_ERR_TIMEOUT) {
-        av_log(avctx, AV_LOG_ERROR, "Failed to get frame: %d\n", ret);
-        return AVERROR_EXTERNAL;
+    if (ret != MPP_OK) {
+        if (timeout == MPP_TIMEOUT_NON_BLOCK) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to get frame (non-block): %d\n", ret);
+            return AVERROR_EXTERNAL;
+        }
+        if (timeout != MPP_TIMEOUT_NON_BLOCK && ret != MPP_NOK && ret != MPP_ERR_TIMEOUT) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to get frame (timeout: %d): %d\n", timeout, ret);
+            return AVERROR_EXTERNAL;
+        }
     }
 
     if (!mpp_frame) {
