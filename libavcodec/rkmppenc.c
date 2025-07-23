@@ -938,7 +938,9 @@ static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet, int timeout
     MppMeta mpp_meta = NULL;
     MppFrame mpp_frame = NULL;
     MppBuffer mpp_buf = NULL;
-    int ret, key_frame = 0;
+    int key_frame = 0;
+    int avg_qp = -1;
+    int ret;
 
     if ((ret = r->mapi->control(r->mctx, MPP_SET_OUTPUT_TIMEOUT, (MppParam)&timeout)) != MPP_OK) {
         av_log(avctx, AV_LOG_ERROR, "Failed to set output timeout: %d\n", ret);
@@ -987,6 +989,12 @@ static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet, int timeout
     mpp_meta_get_s32(mpp_meta, KEY_OUTPUT_INTRA, &key_frame);
     if (key_frame)
         packet->flags |= AV_PKT_FLAG_KEY;
+
+    mpp_meta_get_s32(mpp_meta, KEY_ENC_AVERAGE_QP, &avg_qp);
+    if (avg_qp >= 0)
+        ff_side_data_set_encoder_stats(packet, avg_qp * FF_QP2LAMBDA, NULL, 0,
+                                       (packet->flags & AV_PKT_FLAG_KEY) ?
+                                       AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P);
 
     if ((ret = mpp_meta_get_frame(mpp_meta, KEY_INPUT_FRAME, &mpp_frame)) != MPP_OK) {
         av_log(avctx, AV_LOG_ERROR, "Failed to get key input frame from packet meta: %d\n", ret);
