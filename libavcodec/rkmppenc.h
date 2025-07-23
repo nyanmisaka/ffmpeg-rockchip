@@ -33,6 +33,7 @@
 #include "encode.h"
 #include "hwconfig.h"
 #include "internal.h"
+#include "packet_internal.h"
 
 #include "libavutil/hwcontext_rkmpp.h"
 #include "libavutil/opt.h"
