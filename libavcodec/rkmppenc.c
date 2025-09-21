@@ -1063,7 +1063,7 @@ get:
     return 0;
 }
 
-static int rkmpp_encode_close(AVCodecContext *avctx)
+static av_cold int rkmpp_encode_close(AVCodecContext *avctx)
 {
     RKMPPEncContext *r = avctx->priv_data;
 
@@ -1118,7 +1118,7 @@ static av_cold int init_hwframes_ctx(AVCodecContext *avctx)
     return 0;
 }
 
-static int rkmpp_encode_init(AVCodecContext *avctx)
+static av_cold int rkmpp_encode_init(AVCodecContext *avctx)
 {
     RKMPPEncContext *r = avctx->priv_data;
     enum AVPixelFormat pix_fmt = AV_PIX_FMT_NONE;
