@@ -360,6 +360,7 @@ External library support:
   --enable-omx             enable OpenMAX IL code [no]
   --enable-omx-rpi         enable OpenMAX IL code for Raspberry Pi [no]
   --enable-rkmpp           enable Rockchip Media Process Platform code [no]
+  --enable-rkrga           enable Rockchip 2D Raster Graphic Acceleration code [no]
   --disable-v4l2-m2m       disable V4L2 mem2mem code [autodetect]
   --disable-vaapi          disable Video Acceleration API (mainly Unix/Intel) code [autodetect]
   --disable-vdpau          disable Nvidia Video Decode and Presentation API for Unix code [autodetect]
@@ -1908,6 +1909,7 @@ EXTERNAL_LIBRARY_VERSION3_LIST="
     libvo_amrwbenc
     mbedtls
     rkmpp
+    rkrga
 "
 
 EXTERNAL_LIBRARY_GPLV3_LIST="
@@ -4005,6 +4007,7 @@ overlay_qsv_filter_deps="libmfx"
 overlay_qsv_filter_select="qsvvpp"
 overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
 overlay_vulkan_filter_deps="vulkan spirv_compiler"
+overlay_rkrga_filter_deps="rkrga"
 owdenoise_filter_deps="gpl"
 pad_opencl_filter_deps="opencl"
 pan_filter_deps="swresample"
@@ -4027,6 +4030,7 @@ sr_amf_filter_deps="amf"
 vpp_amf_filter_deps="amf"
 scale_qsv_filter_deps="libmfx"
 scale_qsv_filter_select="qsvvpp"
+scale_rkrga_filter_deps="rkrga"
 scdet_filter_select="scene_sad"
 scdet_vulkan_filter_deps="vulkan spirv_compiler"
 select_filter_select="scene_sad"
@@ -4071,6 +4075,7 @@ scale_vt_filter_deps="videotoolbox VTPixelTransferSessionCreate"
 scale_vulkan_filter_deps="vulkan spirv_compiler"
 vpp_qsv_filter_deps="libmfx"
 vpp_qsv_filter_select="qsvvpp"
+vpp_rkrga_filter_deps="rkrga"
 xfade_opencl_filter_deps="opencl"
 xfade_vulkan_filter_deps="vulkan spirv_compiler"
 yadif_cuda_filter_deps="ffnvcodec"
@@ -7270,6 +7275,11 @@ enabled rkmpp             && { require_pkg_config rkmpp rockchip_mpp rockchip/rk
                                require_pkg_config rockchip_mpp "rockchip_mpp >= 1.3.9" rockchip/rk_mpi.h mpp_create &&
                                { enabled libdrm ||
                                  die "ERROR: rkmpp requires --enable-libdrm"; }
+                             }
+enabled rkrga             && { require_pkg_config rkrga librga rga/RgaApi.h c_RkRgaBlit &&
+                               require_pkg_config rkrga librga rga/im2d.h querystring &&
+                               { enabled rkmpp ||
+                                 die "ERROR: rkrga requires --enable-rkmpp"; }
                              }
 enabled vapoursynth       && require_headers "vapoursynth/VSScript4.h vapoursynth/VapourSynth4.h"
 
