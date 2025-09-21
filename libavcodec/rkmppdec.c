@@ -1210,7 +1210,7 @@ exit:
     return ret;
 }
 
-static void rkmpp_decode_flush(AVCodecContext *avctx)
+static av_cold void rkmpp_decode_flush(AVCodecContext *avctx)
 {
     RKMPPDecContext *r = avctx->priv_data;
     int ret;
