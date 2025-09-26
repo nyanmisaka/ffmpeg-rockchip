@@ -539,6 +539,15 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
             mpp_enc_cfg_set_s32(cfg, "rc:qp_min", qp_min);
             mpp_enc_cfg_set_s32(cfg, "rc:qp_max_i",qp_max_i);
             mpp_enc_cfg_set_s32(cfg, "rc:qp_min_i", qp_min_i);
+
+            /* Intra Refresh / GDR */
+            if (r->intra_refresh && r->refresh_num) {
+                mpp_enc_cfg_set_u32(cfg, "rc:refresh_en", 1);
+                mpp_enc_cfg_set_u32(cfg, "rc:refresh_mode", r->refresh_mode);
+                mpp_enc_cfg_set_u32(cfg, "rc:refresh_num", r->refresh_num);
+                av_log(avctx, AV_LOG_VERBOSE, "Requested to use Intra Refresh, "
+                       "Mode/Num is set to %d/%d\n", r->refresh_mode, r->refresh_num);
+            }
         }
         break;
     case AV_CODEC_ID_MJPEG:
