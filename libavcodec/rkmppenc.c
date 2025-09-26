@@ -632,7 +632,8 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
 
     if (avctx->codec_id == AV_CODEC_ID_H264 ||
         avctx->codec_id == AV_CODEC_ID_HEVC) {
-        sei_mode = r->udu_sei ? MPP_ENC_SEI_MODE_ONE_FRAME : MPP_ENC_SEI_MODE_DISABLE;
+        sei_mode = (r->udu_sei || (r->intra_refresh && r->refresh_num))
+                   ? MPP_ENC_SEI_MODE_ONE_FRAME : MPP_ENC_SEI_MODE_DISABLE;
         if ((ret = r->mapi->control(r->mctx, MPP_ENC_SET_SEI_CFG, &sei_mode)) != MPP_OK) {
             av_log(avctx, AV_LOG_ERROR, "Failed to set SEI config: %d\n", ret);
             return AVERROR_EXTERNAL;
