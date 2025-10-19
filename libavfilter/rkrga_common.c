@@ -678,6 +678,7 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
             goto exit;
         }
 
+#ifndef RGA_NORMAL_FBCE_RGB_BGR_FIXUP
         /* Inverted RGB/BGR order in FBCE */
         switch (info.rect.format) {
         case RK_FORMAT_RGBA_8888:
@@ -687,6 +688,7 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
             info.rect.format = RK_FORMAT_RGBA_8888;
             break;
         }
+#endif
 
         info.rect.wstride = w_stride;
         info.rect.hstride = h_stride;
