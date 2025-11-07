@@ -45,7 +45,7 @@
 #define MAX_SOC_NAME_LENGTH 128
 
 typedef struct RKMPPDecContext {
-    AVClass       *class;
+    const AVClass *class;
 
     MppApi        *mapi;
     MppCtx         mctx;
