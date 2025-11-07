@@ -396,7 +396,9 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
     RK_U32 rc_mode, fps_num, fps_den;
     MppEncHeaderMode header_mode;
     MppEncSeiMode sei_mode;
-    int max_bps, min_bps;
+    int64_t target_bps = FFMIN(avctx->bit_rate, INT_MAX);
+    int64_t max_bps = FFMIN(avctx->rc_max_rate, INT_MAX);
+    int64_t min_bps = FFMIN(avctx->rc_min_rate, INT_MAX);
     int qp_init, qp_max, qp_min, qp_max_i, qp_min_i;
     int ret;
 
@@ -451,7 +453,7 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
     if (rc_mode == MPP_ENC_RC_MODE_BUTT) {
         if (r->qp_init >= 0)
             rc_mode = MPP_ENC_RC_MODE_FIXQP;
-        else if (avctx->rc_max_rate > 0)
+        else if (max_bps > 0)
             rc_mode = MPP_ENC_RC_MODE_VBR;
         else
             rc_mode = MPP_ENC_RC_MODE_CBR;
@@ -476,26 +478,27 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
     case MPP_ENC_RC_MODE_VBR:
     case MPP_ENC_RC_MODE_AVBR:
         /* VBR mode has wide bound */
-        max_bps = (avctx->rc_max_rate > 0 && avctx->rc_max_rate >= avctx->bit_rate)
-                  ? avctx->rc_max_rate : (avctx->bit_rate * 17 / 16);
-        min_bps = (avctx->rc_min_rate > 0 && avctx->rc_min_rate <= avctx->bit_rate)
-                  ? avctx->rc_min_rate : (avctx->bit_rate * 1 / 16);
+        max_bps = (max_bps > 0 && max_bps >= target_bps)
+                  ? max_bps : (target_bps * 17 / 16);
+        min_bps = (min_bps > 0 && min_bps <= target_bps)
+                  ? min_bps : (target_bps * 1 / 16);
         break;
     case MPP_ENC_RC_MODE_CBR:
     default:
         /* CBR mode has narrow bound */
-        max_bps = avctx->bit_rate * 17 / 16;
-        min_bps = avctx->bit_rate * 15 / 16;
+        max_bps = target_bps * 17 / 16;
+        min_bps = target_bps * 15 / 16;
         break;
     }
+    max_bps = FFMIN(max_bps, INT_MAX);
     if (rc_mode == MPP_ENC_RC_MODE_CBR ||
         rc_mode == MPP_ENC_RC_MODE_VBR ||
         rc_mode == MPP_ENC_RC_MODE_AVBR) {
-        mpp_enc_cfg_set_u32(cfg, "rc:bps_target", avctx->bit_rate);
-        mpp_enc_cfg_set_s32(cfg, "rc:bps_max", max_bps);
-        mpp_enc_cfg_set_s32(cfg, "rc:bps_min", min_bps);
-        av_log(avctx, AV_LOG_VERBOSE, "Bitrate Target/Min/Max is set to %ld/%d/%d\n",
-               avctx->bit_rate, min_bps, max_bps);
+        mpp_enc_cfg_set_s32(cfg, "rc:bps_target", (int32_t)target_bps);
+        mpp_enc_cfg_set_s32(cfg, "rc:bps_max", (int32_t)max_bps);
+        mpp_enc_cfg_set_s32(cfg, "rc:bps_min", (int32_t)min_bps);
+        av_log(avctx, AV_LOG_VERBOSE, "Bitrate Target/Min/Max is set to %"PRId32"/%"PRId32"/%"PRId32"\n",
+               (int32_t)target_bps, (int32_t)min_bps, (int32_t)max_bps);
     }
 
     if (avctx->rc_buffer_size > 0 &&
