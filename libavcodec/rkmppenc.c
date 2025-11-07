@@ -1214,8 +1214,9 @@ static av_cold int rkmpp_encode_init(AVCodecContext *avctx)
     else if (avctx->codec_id == AV_CODEC_ID_MJPEG)
         r->async_frames = MJPEG_ASYNC_FRAMES;
 
-    if (avctx->codec_id == AV_CODEC_ID_H264 ||
-        avctx->codec_id == AV_CODEC_ID_HEVC) {
+    if ((avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) &&
+        (avctx->codec_id == AV_CODEC_ID_H264 ||
+         avctx->codec_id == AV_CODEC_ID_HEVC)) {
         RK_U8 enc_hdr_buf[H26X_HEADER_SIZE];
         size_t pkt_len = 0;
         void *pkt_pos = NULL;
