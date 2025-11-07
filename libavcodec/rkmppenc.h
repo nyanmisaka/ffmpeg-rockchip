@@ -54,7 +54,7 @@ typedef struct MPPEncFrame {
 } MPPEncFrame;
 
 typedef struct RKMPPEncContext {
-    AVClass           *class;
+    const AVClass     *class;
 
     MppApi            *mapi;
     MppCtx             mctx;
