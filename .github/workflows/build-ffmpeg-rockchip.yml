@@ -1,0 +1,131 @@
+name: Build FFmpeg Rockchip
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main", "master", "8.0"]
+    paths:
+      - ".github/workflows/build-ffmpeg-rockchip.yml"
+      - "ci/build_ffmpeg_rockchip.sh"
+      - "configure"
+      - "Makefile"
+      - "compat/**"
+      - "ffbuild/**"
+      - "fftools/**"
+      - "libavcodec/**"
+      - "libavdevice/**"
+      - "libavfilter/**"
+      - "libavformat/**"
+      - "libavutil/**"
+      - "libswresample/**"
+      - "libswscale/**"
+  pull_request:
+    paths:
+      - ".github/workflows/build-ffmpeg-rockchip.yml"
+      - "ci/build_ffmpeg_rockchip.sh"
+      - "configure"
+      - "Makefile"
+      - "compat/**"
+      - "ffbuild/**"
+      - "fftools/**"
+      - "libavcodec/**"
+      - "libavdevice/**"
+      - "libavfilter/**"
+      - "libavformat/**"
+      - "libavutil/**"
+      - "libswresample/**"
+      - "libswscale/**"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04-arm
+    container:
+      image: debian:bullseye
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [shared, static]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          apt-get update
+          apt-get install -y \
+            build-essential \
+            ca-certificates \
+            git \
+            cmake \
+            ninja-build \
+            pkg-config \
+            python3 \
+            python3-pip \
+            yasm \
+            nasm \
+            curl \
+            tar \
+            patchelf \
+            file
+          python3 -m pip install --no-cache-dir --upgrade pip
+          python3 -m pip install --no-cache-dir "meson==0.63.3"
+          meson --version
+
+      - name: CI machine info
+        run: |
+          set -euo pipefail
+          echo "=== runner context ==="
+          echo "GITHUB_RUN_ID=${GITHUB_RUN_ID}"
+          echo "GITHUB_RUN_NUMBER=${GITHUB_RUN_NUMBER}"
+          echo "GITHUB_WORKFLOW=${GITHUB_WORKFLOW}"
+          echo "GITHUB_JOB=${GITHUB_JOB}"
+          echo "GITHUB_REF=${GITHUB_REF}"
+          echo "RUNNER_OS=${RUNNER_OS}"
+          echo "RUNNER_ARCH=${RUNNER_ARCH}"
+          echo
+          echo "=== kernel / distro ==="
+          uname -a
+          cat /etc/os-release || true
+          echo
+          echo "=== cpu ==="
+          if command -v lscpu >/dev/null 2>&1; then
+            lscpu
+          else
+            nproc
+            sed -n '1,80p' /proc/cpuinfo
+          fi
+          echo
+          echo "=== memory ==="
+          if command -v free >/dev/null 2>&1; then
+            free -h
+          else
+            sed -n '1,40p' /proc/meminfo
+          fi
+          echo
+          echo "=== disk ==="
+          df -h
+          echo
+          echo "=== toolchain ==="
+          cc --version | sed -n '1,2p'
+          c++ --version | sed -n '1,2p'
+          cmake --version | sed -n '1,2p'
+          ninja --version
+          meson --version
+          pkg-config --version
+          ldd --version | sed -n '1,2p'
+          getconf GNU_LIBC_VERSION || true
+
+      - name: Build ${{ matrix.variant }} package
+        run: |
+          ./ci/build_ffmpeg_rockchip.sh "${{ matrix.variant }}" 4
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-rockchip-${{ matrix.variant }}-${{ runner.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
