@@ -3,7 +3,7 @@ name: Build FFmpeg Rockchip
 on:
   workflow_dispatch:
   push:
-    branches: ["main", "master", "8.0"]
+    branches: ["master", "8.0"]
     paths:
       - ".github/workflows/build-ffmpeg-rockchip.yml"
       - "ci/build_ffmpeg_rockchip.sh"
