@@ -149,6 +149,7 @@ const FFCodec ff_##x##_rkmpp_decoder = { \
     .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | \
                       AV_CODEC_CAP_HARDWARE, \
     .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE | \
+                      FF_CODEC_CAP_INIT_CLEANUP | \
                       FF_CODEC_CAP_SETS_FRAME_PROPS, \
     .p.pix_fmts     = rkmpp_dec_pix_fmts, \
     .hw_configs     = rkmpp_dec_hw_configs, \
