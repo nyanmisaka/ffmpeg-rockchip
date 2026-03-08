@@ -365,7 +365,6 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
     return 0;
 
 fail:
-    rkmpp_decode_close(avctx);
     return ret;
 }
 
