@@ -1016,8 +1016,10 @@ static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet, int timeout
     }
 
     mpp_buf = mpp_frame_get_buffer(mpp_frame);
-    if (!mpp_buf)
-        return AVERROR(ENOMEM);
+    if (!mpp_buf) {
+        ret = AVERROR(ENOMEM);
+        goto exit;
+    }
 
     /* mark buffer as unused (idx < 0) */
     mpp_buffer_set_index(mpp_buf, -1);
@@ -1296,7 +1298,6 @@ fail:
     if (mpp_pkt)
         mpp_packet_deinit(&mpp_pkt);
 
-    rkmpp_encode_close(avctx);
     return ret;
 }
 
