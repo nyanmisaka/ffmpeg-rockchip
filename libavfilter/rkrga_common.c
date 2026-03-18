@@ -580,6 +580,20 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
         goto fail;
     }
     out_frame->frame->crop_top = 0;
+    if ((in0_info->rotate_mode & 0x04) == 0x04 /* HAL_TRANSFORM_ROT_90 */ ||
+        (in0_info->rotate_mode & 0x07) == 0x07 /* HAL_TRANSFORM_ROT_270 */) {
+        av_reduce(&out_frame->frame->sample_aspect_ratio.den,
+                  &out_frame->frame->sample_aspect_ratio.num,
+                  (int64_t)in->sample_aspect_ratio.num * outlink->w * inlink->w,
+                  (int64_t)in->sample_aspect_ratio.den * outlink->h * inlink->h,
+                  INT_MAX);
+    } else {
+        av_reduce(&out_frame->frame->sample_aspect_ratio.num,
+                  &out_frame->frame->sample_aspect_ratio.den,
+                  (int64_t)in->sample_aspect_ratio.num * outlink->h * inlink->w,
+                  (int64_t)in->sample_aspect_ratio.den * outlink->w * inlink->h,
+                  INT_MAX);
+    }
 
     if ((ret = av_hwframe_get_buffer(hw_frame_ctx, out_frame->frame, 0)) < 0) {
         av_log(ctx, AV_LOG_ERROR, "Cannot allocate an internal frame: %d\n", ret);
