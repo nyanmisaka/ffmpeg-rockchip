@@ -89,6 +89,11 @@ The documentation is available on the [Wiki](https://github.com/nyanmisaka/ffmpe
 
 @[hbiyik](https://github.com/hbiyik) @[HermanChen](https://github.com/HermanChen) @[rigaya](https://github.com/rigaya)
 
+## Disclaimer
+
+This project is an UNOFFICIAL fork of FFmpeg and is NOT the property of Rockchip Electronics Co., Ltd.
+The MPP and RGA components used are compatible with FFmpeg by enabling the LGPLv3 license: "./configure --enable-version3".
+
 ---
 
 FFmpeg README
