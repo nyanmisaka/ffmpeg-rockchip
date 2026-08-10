@@ -7,6 +7,7 @@ This project aims to provide full hardware transcoding pipeline in FFmpeg CLI fo
 * MPP decoders support producing AFBC (ARM Frame Buffer Compression) image
 * MPP decoders support de-interlace using IEP (Image Enhancement Processor)
 * MPP decoders support allocator half-internal and pure-external modes
+* MPP decoders export static and dynamic (HDR10+, HDR Vivid) HDR metadata
 * MPP encoders support up to 8K H.264 and HEVC encoding
 * MPP encoders support async encoding, AKA frame-parallel
 * MPP encoders support consuming AFBC image
