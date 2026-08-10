@@ -57,8 +57,8 @@ typedef struct RGAFormatMap {
     { AV_PIX_FMT_NV16,     RK_FORMAT_YCbCr_422_SP }, \
     { AV_PIX_FMT_NV24,     RK_FORMAT_YCbCr_444_SP },     /* RGA2-Pro only */ \
     { AV_PIX_FMT_NV42,     RK_FORMAT_YCrCb_444_SP },     /* RGA2-Pro only */ \
-    { AV_PIX_FMT_P010,     RK_FORMAT_YCbCr_420_SP_10B }, /* RGA3 only */ \
-    { AV_PIX_FMT_P210,     RK_FORMAT_YCbCr_422_SP_10B }, /* RGA3 only */ \
+    { AV_PIX_FMT_P010,     RK_FORMAT_P010 },             /* RGA3 only, librga >= 1.10.6 */ \
+    { AV_PIX_FMT_P210,     RK_FORMAT_P210 },             /* RGA3 only, librga >= 1.10.6 */ \
     { AV_PIX_FMT_NV15,     RK_FORMAT_YCbCr_420_SP_10B }, /* RGA2 only input, aka P010 compact */ \
     { AV_PIX_FMT_NV20,     RK_FORMAT_YCbCr_422_SP_10B }, /* RGA2 only input, aka P210 compact */ \
     { AV_PIX_FMT_YUYV422,  RK_FORMAT_YUYV_422 }, \
@@ -195,7 +195,9 @@ static int is_pixel_stride_rga3_compat(int ws, int hs,
     case RK_FORMAT_YCrCb_420_SP:
     case RK_FORMAT_YCbCr_422_SP:     return !(ws % 16) && !(hs % 2);
     case RK_FORMAT_YCbCr_420_SP_10B:
-    case RK_FORMAT_YCbCr_422_SP_10B: return !(ws % 64) && !(hs % 2);
+    case RK_FORMAT_YCbCr_422_SP_10B:
+    case RK_FORMAT_P010:
+    case RK_FORMAT_P210:               return !(ws % 64) && !(hs % 2);
     case RK_FORMAT_YUYV_422:
     case RK_FORMAT_YVYU_422:
     case RK_FORMAT_UYVY_422:         return !(ws % 8) && !(hs % 2);
@@ -462,9 +464,6 @@ static RGAFrame *submit_frame(RKRGAContext *r, AVFilterLink *inlink,
     info.in_fence_fd  = -1;
     info.out_fence_fd = -1;
 
-    if (in_info->uncompact_10b_msb)
-        info.is_10b_compact = info.is_10b_endian = 1;
-
     if (!nb_link) {
         info.rotation = in_info->rotate_mode;
         info.blend    = (do_overlay && !pat_preproc) ? in_info->blend_mode : 0;
@@ -643,9 +642,6 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
     info.out_fence_fd = -1;
     info.sync_mode    = RGA_BLIT_ASYNC;
 
-    if (out_info->uncompact_10b_msb)
-        info.is_10b_compact = info.is_10b_endian = 1;
-
     if (!pat_preproc) {
         int is_rga2_used = r->is_rga2_used || out_info->scheduler_core == (out_info->scheduler_core & 0xc);
 
@@ -694,7 +690,9 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
         h_stride = FFALIGN(pat_preproc ? inlink->h : outlink->h, RK_RGA_AFBC_16x16_STRIDE_ALIGN);
 
         if ((info.rect.format == RK_FORMAT_YCbCr_420_SP_10B ||
-             info.rect.format == RK_FORMAT_YCbCr_422_SP_10B) && (w_stride % 64)) {
+             info.rect.format == RK_FORMAT_YCbCr_422_SP_10B ||
+             info.rect.format == RK_FORMAT_P010 ||
+             info.rect.format == RK_FORMAT_P210) && (w_stride % 64)) {
             av_log(ctx, AV_LOG_WARNING, "Output pixel wstride '%d' format '%s' is not supported by RGA3 AFBC\n",
                    w_stride, av_get_pix_fmt_name(out_info->pix_fmt));
             r->afbc_out = 0;
@@ -1033,7 +1031,9 @@ static av_cold int verify_rga_frame_info(AVFilterContext *avctx,
     if (r->has_rga3 && r->has_rga2e && !r->is_rga2_used &&
         (r->scheduler_core == 0 || avctx->nb_inputs > 1 ||
          scale_ratio_w != 1.0f || scale_ratio_h != 1.0f ||
-         src->crop || src->uncompact_10b_msb || dst->uncompact_10b_msb)) {
+         src->crop ||
+         src->pix_fmt == AV_PIX_FMT_P010 || src->pix_fmt == AV_PIX_FMT_P210 ||
+         dst->pix_fmt == AV_PIX_FMT_P010 || dst->pix_fmt == AV_PIX_FMT_P210)) {
         r->scheduler_core = 0x3;
     }
 
@@ -1090,9 +1090,6 @@ static av_cold int fill_rga_frame_info_by_link(AVFilterContext *avctx,
         info->act_w = ALIGN_DOWN(info->act_w, RK_RGA_YUV_ALIGN);
         info->act_h = ALIGN_DOWN(info->act_h, RK_RGA_YUV_ALIGN);
     }
-
-    info->uncompact_10b_msb = info->pix_fmt == AV_PIX_FMT_P010 ||
-                              info->pix_fmt == AV_PIX_FMT_P210;
 
     if (link->w * link->h > (3840 * 2160 * 3))
         r->async_depth = FFMIN(r->async_depth, 1);
@@ -1278,12 +1275,63 @@ av_cold int ff_rkrga_close(AVFilterContext *avctx)
     return 0;
 }
 
+static int get_im_transform(int rotate_mode)
+{
+    int usage = 0;
+
+    /* low nibble: legacy HAL_TRANSFORM rotation/flip bits */
+    switch (rotate_mode & 0x07) {
+    case 0x01: usage |= IM_HAL_TRANSFORM_FLIP_H;  break; /* HAL_TRANSFORM_FLIP_H */
+    case 0x02: usage |= IM_HAL_TRANSFORM_FLIP_V;  break; /* HAL_TRANSFORM_FLIP_V */
+    case 0x03: usage |= IM_HAL_TRANSFORM_ROT_180; break; /* HAL_TRANSFORM_ROT_180 */
+    case 0x04: usage |= IM_HAL_TRANSFORM_ROT_90;  break; /* HAL_TRANSFORM_ROT_90 */
+    case 0x07: usage |= IM_HAL_TRANSFORM_ROT_270; break; /* HAL_TRANSFORM_ROT_270 */
+    default: break;
+    }
+
+    /* flips may additionally be packed in the high nibble */
+    if (rotate_mode & (0x01 << 4))
+        usage |= IM_HAL_TRANSFORM_FLIP_H;
+    if (rotate_mode & (0x02 << 4))
+        usage |= IM_HAL_TRANSFORM_FLIP_V;
+
+    return usage;
+}
+
+static rga_buffer_t info_to_im_buffer(const rga_info_t *info, int global_alpha)
+{
+    rga_buffer_t buf = wrapbuffer_fd_t(info->fd,
+                                       info->rect.xoffset + info->rect.width,
+                                       info->rect.yoffset + info->rect.height,
+                                       info->rect.wstride, info->rect.hstride,
+                                       info->rect.format);
+
+    buf.rd_mode          = info->rd_mode;
+    buf.color_space_mode = info->color_space_mode;
+    buf.global_alpha     = (global_alpha > 0) ? global_alpha : 0xff;
+
+    return buf;
+}
+
+static im_rect info_to_im_rect(const rga_info_t *info)
+{
+    im_rect rect = { info->rect.xoffset, info->rect.yoffset,
+                     info->rect.width,    info->rect.height };
+
+    return rect;
+}
+
 static int call_rkrga_blit(AVFilterContext *avctx,
                           rga_info_t *src_info,
                           rga_info_t *dst_info,
                           rga_info_t *pat_info)
 {
-    int ret;
+    rga_buffer_t src_buf, dst_buf, pat_buf = { 0 };
+    im_rect srect, drect, prect = { 0 };
+    im_opt_t opt = { 0 };
+    IM_STATUS status;
+    int usage = 0;
+    int release_fence_fd = -1;
 
     if (!src_info || !dst_info)
         return AVERROR(EINVAL);
@@ -1300,10 +1348,50 @@ static int call_rkrga_blit(AVFilterContext *avctx,
     PRINT_RGA_INFO(avctx, pat_info, "pat");
 #undef PRINT_RGA_INFO
 
-    if ((ret = c_RkRgaBlit(src_info, dst_info, pat_info)) != 0) {
-        av_log(avctx, AV_LOG_ERROR, "RGA blit failed: %d\n", ret);
+    src_buf = info_to_im_buffer(src_info, 0);
+    dst_buf = info_to_im_buffer(dst_info, 0);
+    srect   = info_to_im_rect(src_info);
+    drect   = info_to_im_rect(dst_info);
+
+    usage |= get_im_transform(src_info->rotation);
+
+    if (src_info->blend) {
+        /* IM_ALPHA_BLEND_DST_OVER: pat (srcB) over src (srcA) */
+        usage |= IM_ALPHA_BLEND_DST_OVER;
+
+        /* legacy bit 12: the pat alpha is straight and needs premultiplying;
+         * without it the pat is already premultiplied */
+        if (!(src_info->blend & (1 << 12)))
+            usage |= IM_ALPHA_BLEND_PRE_MUL;
+    }
+
+    if (pat_info) {
+        const int fg_alpha = (src_info->blend >> 16) & 0xff;
+        const int bg_alpha = (src_info->blend >> 24) & 0xff;
+
+        pat_buf = info_to_im_buffer(pat_info, fg_alpha);
+        if (bg_alpha > 0)
+            src_buf.global_alpha = bg_alpha;
+        prect = info_to_im_rect(pat_info);
+    }
+
+    opt.priority = dst_info->priority;
+    opt.core     = dst_info->core; /* IM_SCHEDULER_* match the legacy core bits */
+
+    if (dst_info->sync_mode == RGA_BLIT_ASYNC)
+        usage |= IM_ASYNC;
+    else
+        usage |= IM_SYNC;
+
+    status = improcessOpt(src_buf, dst_buf, pat_buf,
+                          srect, drect, prect,
+                          -1, &release_fence_fd, &opt, usage);
+    if (status != IM_STATUS_SUCCESS) {
+        av_log(avctx, AV_LOG_ERROR, "RGA blit failed: %s\n", imStrError_t(status));
         return AVERROR_EXTERNAL;
     }
+
+    dst_info->out_fence_fd = release_fence_fd;
     if (dst_info->sync_mode == RGA_BLIT_ASYNC &&
         dst_info->out_fence_fd <= 0) {
         av_log(avctx, AV_LOG_ERROR, "RGA async blit returned invalid fence_fd: %d\n",
