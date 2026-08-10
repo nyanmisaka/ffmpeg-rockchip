@@ -68,6 +68,14 @@ typedef struct RKMPPDecContext {
     int            afbc;
     int            fast_parse;
     int            buf_mode;
+    int            thumbnail;
+
+    int            thumbnail_resolved;
+    int            thumbnail_active;
+    RK_U32         tbn_width;
+    RK_U32         tbn_height;
+    RK_U32         tbn_hor_stride;
+    RK_U32         tbn_ver_stride;
 } RKMPPDecContext;
 
 enum {
@@ -99,6 +107,7 @@ static const AVOption options[] = {
         { "on",     "Enable AFBC support",                     0, AV_OPT_TYPE_CONST, { .i64 = RKMPP_DEC_AFBC_ON     }, 0, 0, VD, .unit = "afbc" },
         { "rga",    "Enable AFBC if capable RGA is available", 0, AV_OPT_TYPE_CONST, { .i64 = RKMPP_DEC_AFBC_ON_RGA }, 0, 0, VD, .unit = "afbc" },
     { "fast_parse", "Enable fast parsing to improve decoding parallelism", OFFSET(fast_parse), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, VD },
+    { "thumbnail",  "Enable hardware thumbnail (half-resolution) output for supported SoCs", OFFSET(thumbnail), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VD },
     { "buf_mode",   "Set the buffer mode for MPP decoder", OFFSET(buf_mode), AV_OPT_TYPE_INT, { .i64 = RKMPP_DEC_HALF_INTERNAL }, 0, 1, VD, .unit = "buf_mode" },
         { "half",   "Half internal mode",                      0, AV_OPT_TYPE_CONST, { .i64 = RKMPP_DEC_HALF_INTERNAL }, 0, 0, VD, .unit = "buf_mode" },
         { "ext",    "Pure external mode",                      0, AV_OPT_TYPE_CONST, { .i64 = RKMPP_DEC_PURE_EXTERNAL }, 0, 0, VD, .unit = "buf_mode" },
