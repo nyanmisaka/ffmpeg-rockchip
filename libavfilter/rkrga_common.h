@@ -26,7 +26,7 @@
 #ifndef AVFILTER_RKRGA_COMMON_H
 #define AVFILTER_RKRGA_COMMON_H
 
-#include <rga/RgaApi.h>
+#include <rga/drmrga.h>
 #include <rga/im2d.h>
 
 #include "avfilter.h"
@@ -60,7 +60,6 @@ typedef struct RGAFrameInfo {
     int                       act_y;
     int                       act_w;
     int                       act_h;
-    int                       uncompact_10b_msb;
     int                       rotate_mode;
     int                       blend_mode;
     int                       crop;

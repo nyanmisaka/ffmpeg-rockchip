@@ -10,6 +10,7 @@ This project aims to provide full hardware transcoding pipeline in FFmpeg CLI fo
 * MPP encoders support up to 8K H.264 and HEVC encoding
 * MPP encoders support async encoding, AKA frame-parallel
 * MPP encoders support consuming AFBC image
+* RGA filters are built on the im2d API (librga >= 1.10.6)
 * RGA filters support image scaling and pixel format conversion
 * RGA filters support image cropping
 * RGA filters support image transposing
