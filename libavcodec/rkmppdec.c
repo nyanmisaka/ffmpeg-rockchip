@@ -30,6 +30,8 @@
 
 #include "rkmppdec.h"
 
+#include <rockchip/rk_vdec_cfg.h>
+
 #include <fcntl.h>
 #include <unistd.h>
 #if CONFIG_RKRGA
@@ -191,6 +193,38 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
     if (opts_env && av_set_options_string(r, opts_env, "=", " ") <= 0)
         av_log(avctx, AV_LOG_WARNING, "Unable to set decoder options from env\n");
 
+    if (r->thumbnail) {
+        if (avctx->codec_id != AV_CODEC_ID_H264 &&
+            avctx->codec_id != AV_CODEC_ID_HEVC &&
+            avctx->codec_id != AV_CODEC_ID_VP9  &&
+            avctx->codec_id != AV_CODEC_ID_AV1) {
+            av_log(avctx, AV_LOG_WARNING,
+                   "Thumbnail mode is not supported in codec '%s', ignoring\n",
+                   avcodec_get_name(avctx->codec_id));
+            r->thumbnail = 0;
+        } else {
+            /*
+             * Hardware downscale output only exists in the vdpu383/vdpu384
+             * decoder cores (rk3562/rk3576/rk3572). On other SoCs MPP accepts
+             * enable_thumbnail but never outputs any frame, so gate it here.
+             */
+            char tbn_soc[128] = { 0 };
+            read_soc_name(avctx, tbn_soc, sizeof(tbn_soc));
+            if (!strstr(tbn_soc, "rk3576") &&
+                !strstr(tbn_soc, "rk3572") &&
+                !strstr(tbn_soc, "rk3562")) {
+                av_log(avctx, AV_LOG_WARNING,
+                       "Thumbnail mode is not supported on this SoC (%s), ignoring\n",
+                       tbn_soc);
+                r->thumbnail = 0;
+            } else {
+                /* The downscaled output is raster-only 8-bit 4:2:0 */
+                r->deint = 0;
+                r->afbc  = RKMPP_DEC_AFBC_OFF;
+            }
+        }
+    }
+
     switch (avctx->pix_fmt) {
     case AV_PIX_FMT_YUV420P:
     case AV_PIX_FMT_YUVJ420P:
@@ -233,6 +267,12 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
         break;
     }
 
+    if (r->thumbnail) {
+        /* The downscaled output is always 8-bit 4:2:0 */
+        pix_fmts[1]      = AV_PIX_FMT_NV12;
+        is_fmt_supported = 1;
+    }
+
     if (avctx->pix_fmt != AV_PIX_FMT_DRM_PRIME) {
         if (!is_fmt_supported) {
             av_log(avctx, AV_LOG_ERROR, "MPP doesn't support codec '%s' with pix_fmt '%s'\n",
@@ -268,6 +308,26 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
         av_log(avctx, AV_LOG_ERROR, "Failed to init MPP context: %d\n", ret);
         ret = AVERROR_EXTERNAL;
         goto fail;
+    }
+
+    if (r->thumbnail) {
+        MppDecCfg dec_cfg = NULL;
+
+        ret = mpp_dec_cfg_init(&dec_cfg);
+        if (ret == MPP_OK) {
+            ret = r->mapi->control(r->mctx, MPP_DEC_GET_CFG, dec_cfg);
+            if (ret == MPP_OK)
+                ret = mpp_dec_cfg_set_u32(dec_cfg, "base:enable_thumbnail",
+                                          MPP_FRAME_THUMBNAIL_ONLY);
+            if (ret == MPP_OK)
+                ret = r->mapi->control(r->mctx, MPP_DEC_SET_CFG, dec_cfg);
+            mpp_dec_cfg_deinit(dec_cfg);
+        }
+        if (ret != MPP_OK) {
+            av_log(avctx, AV_LOG_WARNING,
+                   "Failed to enable thumbnail mode in MPP: %d\n", ret);
+            r->thumbnail = 0;
+        }
     }
 
     if (avctx->codec_id == AV_CODEC_ID_MJPEG) {
@@ -601,6 +661,45 @@ static int rkmpp_export_frame(AVCodecContext *avctx, AVFrame *frame, MppFrame mp
     if (!frame || !mpp_frame)
         return AVERROR(ENOMEM);
 
+    if (r->thumbnail) {
+        if (!r->thumbnail_resolved) {
+            r->thumbnail_resolved = 1;
+
+            if (mpp_frame_get_thumbnail_en(mpp_frame) == MPP_FRAME_THUMBNAIL_ONLY &&
+                r->mapi->control(r->mctx, MPP_DEC_GET_THUMBNAIL_FRAME_INFO, mpp_frame) == MPP_OK) {
+                r->tbn_width      = mpp_frame_get_width(mpp_frame);
+                r->tbn_height     = mpp_frame_get_height(mpp_frame);
+                r->tbn_hor_stride = mpp_frame_get_hor_stride(mpp_frame);
+                r->tbn_ver_stride = mpp_frame_get_ver_stride(mpp_frame);
+                avctx->width      = r->tbn_width;
+                avctx->height     = r->tbn_height;
+                avctx->sw_pix_fmt = AV_PIX_FMT_NV12;
+                r->thumbnail_active = 1;
+                /* Filters (e.g. hwdownload) size their output from the hw
+                 * frames context, sync it with the thumbnail geometry */
+                if (r->hwframe) {
+                    AVHWFramesContext *hwfc = (AVHWFramesContext *)r->hwframe->data;
+                    hwfc->width  = FFALIGN(r->tbn_width,  16);
+                    hwfc->height = FFALIGN(r->tbn_height, 16);
+                }
+                av_log(avctx, AV_LOG_VERBOSE, "Thumbnail mode is active, output size: %dx%d\n",
+                       avctx->width, avctx->height);
+            } else {
+                av_log(avctx, AV_LOG_WARNING,
+                       "Thumbnail mode is not supported on this SoC, "
+                       "falling back to full-resolution output\n");
+            }
+        } else if (r->thumbnail_active) {
+            /* MPP keeps reporting the full-resolution geometry while the
+             * buffer holds the downscaled image, re-apply the cached one */
+            mpp_frame_set_fmt(mpp_frame, MPP_FMT_YUV420SP);
+            mpp_frame_set_width(mpp_frame, r->tbn_width);
+            mpp_frame_set_height(mpp_frame, r->tbn_height);
+            mpp_frame_set_hor_stride(mpp_frame, r->tbn_hor_stride);
+            mpp_frame_set_ver_stride(mpp_frame, r->tbn_ver_stride);
+        }
+    }
+
     mpp_buf = mpp_frame_get_buffer(mpp_frame);
     if (!mpp_buf)
         return AVERROR(EAGAIN);
@@ -845,6 +944,15 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
         }
 
         pix_fmts[1] = rkmpp_get_av_format(mpp_fmt & MPP_FRAME_FMT_MASK);
+
+        if (r->thumbnail) {
+            /* The downscaled output is always 8-bit 4:2:0. If the SoC turns
+             * out to lack downscale support the frames stay full-resolution
+             * but are still exported as NV12-compatible raster. */
+            pix_fmts[1] = AV_PIX_FMT_NV12;
+            r->thumbnail_resolved = 0;
+            r->thumbnail_active   = 0;
+        }
 
         if (avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME)
             avctx->sw_pix_fmt = pix_fmts[1];
@@ -1221,6 +1329,8 @@ static av_cold void rkmpp_decode_flush(AVCodecContext *avctx)
         r->draining = 0;
         r->info_change = 0;
         r->got_frame = 0;
+        r->thumbnail_resolved = 0;
+        r->thumbnail_active   = 0;
 
         av_packet_unref(&r->last_pkt);
     } else
