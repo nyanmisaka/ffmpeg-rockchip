@@ -49,6 +49,11 @@ typedef struct MPPEncFrame {
     AVFrame            *frame;
     MppFrame            mpp_frame;
     MppEncUserDataSet   mpp_sei_set;
+    MppEncROICfg        mpp_roi_cfg;
+    MppEncROIRegion    *mpp_roi_regions;
+    MppEncROICfg2       mpp_roi_cfg2;
+    MppBuffer           mpp_roi_base_buf;
+    MppBuffer           mpp_roi_qp_buf;
     struct MPPEncFrame *next;
     int                 queued;
 } MPPEncFrame;
@@ -87,6 +92,16 @@ typedef struct RKMPPEncContext {
     int                intra_refresh;
     int                refresh_mode;
     int                refresh_num;
+    int                roi;
+
+    /* 0 - legacy KEY_ROI_DATA, 1 - TYPE_2 KEY_ROI_DATA2 (vepu580) */
+    int                roi_data_mode;
+    MppBufferGroup     roi_buf_grp;
+    int                roi_is_hevc;
+    int                roi_mb_w, roi_mb_h;   /* h264 MB grid */
+    int                roi_stride_h, roi_stride_v;
+    int                roi_ctu_w, roi_ctu_h; /* hevc CTU grid */
+    size_t             roi_base_size, roi_qp_size;
 } RKMPPEncContext;
 
 static const AVRational mpp_tb = { 1, 1000000 };
@@ -125,6 +140,8 @@ static const AVRational mpp_tb = { 1, 1000000 };
         { "col", "Refresh by MB column", 0, AV_OPT_TYPE_CONST, { .i64 = MPP_ENC_RC_INTRA_REFRESH_COL }, 0, 0, VE, .unit = "refresh_mode" }, \
     { "refresh_num", "Set how many MB rows or columns refresh each time", OFFSET(refresh_num), AV_OPT_TYPE_INT, \
             { .i64 = 1 }, 1, INT_MAX, VE, "refresh_num" }, \
+    { "roi", "Apply the Regions Of Interest side data to the per-region QP if available", OFFSET(roi), AV_OPT_TYPE_BOOL, \
+            { .i64 = 1 }, 0, 1, VE, "roi" }, \
 
 static const AVOption h264_options[] = {
     RKMPP_ENC_COMMON_OPTS

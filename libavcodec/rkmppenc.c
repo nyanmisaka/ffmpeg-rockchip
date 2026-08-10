@@ -27,6 +27,10 @@
 #include "config_components.h"
 #include "rkmppenc.h"
 
+#include <fcntl.h>
+#include <math.h>
+#include <unistd.h>
+
 static MppCodingType rkmpp_get_coding_type(AVCodecContext *avctx)
 {
     switch (avctx->codec_id) {
@@ -227,6 +231,11 @@ static void clear_unused_frames(MPPEncFrame *list)
                 av_freep(&list->mpp_sei_set.datas);
                 list->mpp_sei_set.count = 0;
 
+                av_freep(&list->mpp_roi_regions);
+                list->mpp_roi_cfg.number  = 0;
+                list->mpp_roi_cfg.regions = NULL;
+                memset(&list->mpp_roi_cfg2, 0, sizeof(list->mpp_roi_cfg2));
+
                 av_frame_free(&list->frame);
                 list->queued = 0;
             }
@@ -258,6 +267,18 @@ static void clear_frame_list(MPPEncFrame **list)
 
         av_freep(&frame->mpp_sei_set.datas);
         frame->mpp_sei_set.count = 0;
+
+        av_freep(&frame->mpp_roi_regions);
+        frame->mpp_roi_cfg.number  = 0;
+        frame->mpp_roi_cfg.regions = NULL;
+        if (frame->mpp_roi_base_buf) {
+            mpp_buffer_put(frame->mpp_roi_base_buf);
+            frame->mpp_roi_base_buf = NULL;
+        }
+        if (frame->mpp_roi_qp_buf) {
+            mpp_buffer_put(frame->mpp_roi_qp_buf);
+            frame->mpp_roi_qp_buf = NULL;
+        }
 
         av_frame_free(&frame->frame);
         av_freep(&frame);
@@ -521,8 +542,25 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
             switch (rc_mode) {
             case MPP_ENC_RC_MODE_FIXQP:
                 qp_init = r->qp_init >= 0 ? r->qp_init : 26;
-                qp_max = qp_min = qp_max_i = qp_min_i = qp_init;
+                if (r->roi) {
+                    /*
+                     * The hardware clamps per-region ROI QP to the rc
+                     * [qp_min, qp_max] range; widen it so ROI targets can
+                     * take effect. The base frame QP stays fixed at qp_init.
+                     */
+                    qp_max = r->qp_max >= 0 ? r->qp_max : 51;
+                    qp_min = FFMIN(r->qp_min >= 0 ? r->qp_min : 0, qp_max);
+                    qp_max_i = r->qp_max_i >= 0 ? r->qp_max_i : qp_max;
+                    qp_min_i = FFMIN(r->qp_min_i >= 0 ? r->qp_min_i : qp_min, qp_max_i);
+                } else {
+                    qp_max = qp_min = qp_max_i = qp_min_i = qp_init;
+                }
                 mpp_enc_cfg_set_s32(cfg, "rc:qp_ip", 0);
+                if (r->roi)
+                    av_log(avctx, AV_LOG_VERBOSE,
+                           "Note: on some SoCs (e.g. rk3588) the CQP mode pins the "
+                           "per-frame QP range to qp_init, so ROI QP adjustments only "
+                           "take effect with VBR/CBR/AVBR\n");
                 break;
             case MPP_ENC_RC_MODE_CBR:
             case MPP_ENC_RC_MODE_VBR:
@@ -712,6 +750,452 @@ static int rkmpp_prepare_udu_sei_data(AVCodecContext *avctx, MPPEncFrame *mpp_en
     return 0;
 }
 
+#define RKMPP_MAX_ROI_REGIONS 8
+
+static void rkmpp_enc_read_soc_name(AVCodecContext *avctx, char *name, int size)
+{
+    const char *dt_path = "/proc/device-tree/compatible";
+    int fd = open(dt_path, O_RDONLY);
+
+    snprintf(name, size - 1, "unknown");
+    if (fd < 0)
+        return;
+
+    ssize_t len = read(fd, name, size - 1);
+    if (len > 0) {
+        name[len] = '\0';
+        /* replace embedded NULs between compatible strings with spaces */
+        for (ssize_t i = 0; i < len - 1; i++)
+            if (!name[i])
+                name[i] = ' ';
+        av_log(avctx, AV_LOG_VERBOSE, "Found SoC name from device-tree: '%s'\n", name);
+    }
+    close(fd);
+}
+
+/*
+ * TYPE_2 ROI data (KEY_ROI_DATA2) consumed by the vepu580 HAL.
+ *
+ * The buffer layouts below describe the hardware register interface of the
+ * vepu580 encoder core (see the roi_en/roi_addr handling in the MPP vepu580
+ * HAL); the cu16/cu8 z-order indexing follows the scan order defined by the
+ * HEVC specification. Implemented independently of Rockchip's ROI utility.
+ *
+ * base cfg buffer (bit-addressed, little-endian), per 16x16 MB (h264) or
+ * per 64x64 CTU (hevc):
+ *   h264: 64 bits/MB - bit 61 force_intra, bit 62 qp_adj_en
+ *   hevc: 512 bits/CTU with 85 entries at four hierarchy levels
+ *         (cu8 0-63, cu16 64-79, cu32 80-83, cu64 84):
+ *           force_inter 2b @ 2*e, force_intra 2b @ 170+2*e,
+ *           force_split 1b @ 340+e, qp_adj 1b @ 425+e
+ * qp cfg buffer, u16 entries at the same indices:
+ *   bits 15 qp_adj_mode (0 = relative), bits 8-14 qp_adj (s7),
+ *   bits 4-7 qp_area_idx
+ * Sizes required by the HAL (per frame):
+ *   h264: base mb_w*mb_h*8, qp mb_w*mb_h*2   (mb grid aligned to 64)
+ *   hevc: base ctu_w*ctu_h*64, qp ctu_w*ctu_h*256
+ *
+ * Hardware constraints (verified on rk3588 / vepu580):
+ *   - the qp adjustment only takes effect in absolute mode (qp_adj_mode = 1);
+ *     relative adjustments are ignored
+ *   - the applied QP is clamped to the rate control [qp_min, qp_max] range
+ */
+typedef struct RKMPPRoiCell {
+    int16_t qp_adj;
+    uint8_t qp_mode; /* 0 relative, 1 absolute */
+    uint8_t force_intra;
+    uint8_t written;
+} RKMPPRoiCell;
+
+typedef struct RKMPPRoiRegion {
+    int x, y, w, h;
+    int qp_adj;
+} RKMPPRoiRegion;
+
+static av_always_inline void roi_buf_set_bit(uint32_t *buf, uint32_t pos, uint32_t val)
+{
+    buf[pos >> 5] |= (val & 1u) << (pos & 31);
+}
+
+/* Morton/z-scan order of (x,y) within an n-by-n block, n a power of two */
+static av_always_inline uint32_t roi_zscan(uint32_t x, uint32_t y, int n)
+{
+    uint32_t z = 0;
+    for (int i = 0; i < n; i++)
+        z |= ((x >> i) & 1u) << (2 * i) | ((y >> i) & 1u) << (2 * i + 1);
+    return z;
+}
+
+static void roi_h264_set_entry(uint32_t *base, uint16_t *qp, int idx,
+                               const RKMPPRoiCell *cell)
+{
+    uint64_t v = 0;
+
+    if (cell->force_intra)
+        v |= UINT64_C(1) << 61;
+    if (cell->qp_adj)
+        v |= UINT64_C(1) << 62;
+    base[idx * 2]     = (uint32_t)v;
+    base[idx * 2 + 1] = (uint32_t)(v >> 32);
+
+    qp[idx] = ((uint16_t)(cell->qp_adj & 0x7f) << 8) |
+              ((uint16_t)cell->qp_mode << 15);
+}
+
+static void roi_hevc_set_entry(uint32_t *base, uint16_t *qp, int idx,
+                               const RKMPPRoiCell *cell)
+{
+    int fi = cell->force_intra ? 1 : 0;
+    int qa = cell->qp_adj ? 1 : 0;
+
+    roi_buf_set_bit(base, 170 + idx * 2,     fi & 1);
+    roi_buf_set_bit(base, 170 + idx * 2 + 1, (fi >> 1) & 1);
+    roi_buf_set_bit(base, 425 + idx,         qa);
+    qp[idx] = ((uint16_t)(cell->qp_adj & 0x7f) << 8) |
+              ((uint16_t)cell->qp_mode << 15);
+}
+
+static void rkmpp_gen_roi_type2_h264(RKMPPEncContext *r,
+                                     uint32_t *base, uint16_t *qp,
+                                     const RKMPPRoiCell *cells)
+{
+    for (int j = 0; j < r->roi_mb_h; j++) {
+        for (int k = 0; k < r->roi_mb_w; k++) {
+            const RKMPPRoiCell *cell = &cells[j * r->roi_stride_h + k];
+            if (cell->written)
+                roi_h264_set_entry(base, qp, j * r->roi_stride_h + k, cell);
+        }
+    }
+}
+
+static void rkmpp_gen_roi_type2_hevc(RKMPPEncContext *r,
+                                     uint32_t *base, uint16_t *qp,
+                                     const RKMPPRoiCell *cells,
+                                     const uint8_t *ctus)
+{
+    const int cu16_line = r->roi_ctu_w * 4;
+
+    for (int cy = 0; cy < r->roi_ctu_h; cy++) {
+        for (int cx = 0; cx < r->roi_ctu_w; cx++) {
+            uint32_t *b = base + (cy * r->roi_ctu_w + cx) * 16; /* 64B/CTU */
+            uint16_t *q = qp   + (cy * r->roi_ctu_w + cx) * 128; /* 256B/CTU */
+            int adjust_cnt = 0;
+            int all_adj = 1;
+
+            if (!ctus[cy * r->roi_ctu_w + cx])
+                continue;
+
+            for (int c = 0; c < 16; c++) {
+                int c16x = cx * 4 + (c & 3);
+                int c16y = cy * 4 + (c / 4);
+                const RKMPPRoiCell *cell = &cells[c16y * cu16_line + c16x];
+                uint32_t z16 = roi_zscan(c & 3, c / 4, 2);
+                int adj = (cell->written && (cell->force_intra || cell->qp_adj));
+
+                adjust_cnt += adj;
+                all_adj    &= adj;
+                if (!cell->written)
+                    continue;
+
+                /* each cu16 splits into four cu8 entries */
+                for (int c8 = 0; c8 < 4; c8++) {
+                    int rx = (c & 3) * 2 + (c8 & 1);
+                    int ry = (c / 4) * 2 + (c8 / 2);
+                    roi_hevc_set_entry(b, q, roi_zscan(rx, ry, 3), cell);
+                }
+                roi_hevc_set_entry(b, q, 64 + z16, cell);
+            }
+
+            /* propagate to cu32/cu64 when the whole CTU is adjusted */
+            if (adjust_cnt == 16 && all_adj) {
+                const RKMPPRoiCell *cell = &cells[cy * 4 * cu16_line + cx * 4];
+                for (int i = 0; i < 4; i++)
+                    roi_hevc_set_entry(b, q, 80 + i, cell);
+                roi_hevc_set_entry(b, q, 84, cell);
+            } else if (adjust_cnt > 0) {
+                /* force split down to cu16 so per-cu16 qp applies */
+                roi_buf_set_bit(b, 340 + 84, 1);
+                for (int i = 0; i < 4; i++)
+                    roi_buf_set_bit(b, 340 + 80 + i, 1);
+                for (int i = 0; i < 16; i++)
+                    roi_buf_set_bit(b, 340 + 64 + i, 1);
+            }
+        }
+    }
+}
+
+static int rkmpp_alloc_roi_type2_bufs(AVCodecContext *avctx, MPPEncFrame *enc_frame)
+{
+    RKMPPEncContext *r = avctx->priv_data;
+    int ret;
+
+    if (enc_frame->mpp_roi_base_buf && enc_frame->mpp_roi_qp_buf)
+        return 0;
+
+    if (!r->roi_buf_grp) {
+        /* ION + cachable, matching how MPP allocates its ROI config buffers */
+        ret = mpp_buffer_group_get_internal(&r->roi_buf_grp,
+                                            MPP_BUFFER_TYPE_ION |
+                                            MPP_BUFFER_FLAGS_CACHABLE);
+        if (ret != MPP_OK) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to get ROI buffer group: %d\n", ret);
+            return AVERROR_EXTERNAL;
+        }
+    }
+
+    if (!enc_frame->mpp_roi_base_buf) {
+        ret = mpp_buffer_get(r->roi_buf_grp, &enc_frame->mpp_roi_base_buf,
+                             r->roi_base_size);
+        if (ret != MPP_OK || !enc_frame->mpp_roi_base_buf) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to alloc ROI base cfg buffer: %d\n", ret);
+            return AVERROR_EXTERNAL;
+        }
+    }
+    if (!enc_frame->mpp_roi_qp_buf) {
+        ret = mpp_buffer_get(r->roi_buf_grp, &enc_frame->mpp_roi_qp_buf,
+                             r->roi_qp_size);
+        if (ret != MPP_OK || !enc_frame->mpp_roi_qp_buf) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to alloc ROI qp cfg buffer: %d\n", ret);
+            return AVERROR_EXTERNAL;
+        }
+    }
+
+    return 0;
+}
+
+static int rkmpp_prepare_roi_data_type2(AVCodecContext *avctx,
+                                        MPPEncFrame *mpp_enc_frame,
+                                        const uint8_t *sd_data, size_t sd_size)
+{
+    RKMPPEncContext *r = avctx->priv_data;
+    RKMPPRoiRegion regions[RKMPP_MAX_ROI_REGIONS];
+    RKMPPRoiCell *cells = NULL;
+    uint8_t *ctus = NULL;
+    uint32_t *base = NULL;
+    uint16_t *qp = NULL;
+    uint32_t self_size;
+    int cell_w, cell_h, nb_regions = 0, n = 0;
+    int base_qp;
+    int ret = 0;
+
+    /*
+     * The vepu580 ROI qp adjustment only takes effect in absolute qp mode
+     * (qp_adj_mode = 1); relative mode is ignored by the hardware. Convert
+     * the qoffset to an absolute target around the encoder's base QP.
+     */
+    if (r->qp_init >= 0)
+        base_qp = r->qp_init;
+    else if (r->qp_min >= 0 && r->qp_max >= 0)
+        base_qp = (r->qp_min + r->qp_max) / 2;
+    else
+        base_qp = 26;
+
+    self_size = ((const AVRegionOfInterest *)sd_data)->self_size;
+    nb_regions = sd_size / self_size;
+    if (nb_regions > RKMPP_MAX_ROI_REGIONS) {
+        av_log(avctx, AV_LOG_WARNING,
+               "Too many ROI regions (%d), keeping the first %d\n",
+               nb_regions, RKMPP_MAX_ROI_REGIONS);
+        nb_regions = RKMPP_MAX_ROI_REGIONS;
+    }
+
+    /* When regions overlap the first one applies, so iterate in reverse */
+    for (int i = nb_regions - 1; i >= 0; i--) {
+        const AVRegionOfInterest *roi =
+            (const AVRegionOfInterest *)(sd_data + (size_t)i * self_size);
+        RKMPPRoiRegion *rg = &regions[n];
+
+        rg->x = av_clip(roi->left, 0, avctx->width);
+        rg->y = av_clip(roi->top,  0, avctx->height);
+        rg->w = av_clip(roi->right  - roi->left, 0, avctx->width  - rg->x);
+        rg->h = av_clip(roi->bottom - roi->top,  0, avctx->height - rg->y);
+        if (!rg->w || !rg->h)
+            continue;
+
+        rg->qp_adj = roi->qoffset.den ?
+            av_clip(llrint(av_q2d(roi->qoffset) * 51), -51, 51) : 0;
+        n++;
+    }
+    if (!n)
+        return 0;
+
+    if ((ret = rkmpp_alloc_roi_type2_bufs(avctx, mpp_enc_frame)) < 0)
+        return ret;
+
+    base = (uint32_t *)mpp_buffer_get_ptr(mpp_enc_frame->mpp_roi_base_buf);
+    qp   = (uint16_t *)mpp_buffer_get_ptr(mpp_enc_frame->mpp_roi_qp_buf);
+    if (!base || !qp)
+        return AVERROR_EXTERNAL;
+    memset(base, 0, r->roi_base_size);
+    memset(qp, 0, r->roi_qp_size);
+
+    if (r->roi_is_hevc) {
+        cell_w = r->roi_ctu_w * 4;
+        cell_h = r->roi_ctu_h * 4;
+    } else {
+        cell_w = r->roi_stride_h;
+        cell_h = r->roi_stride_v;
+    }
+
+    cells = av_calloc(cell_w * cell_h, sizeof(*cells));
+    ctus  = r->roi_is_hevc ? av_calloc(r->roi_ctu_w * r->roi_ctu_h, 1) : NULL;
+    if (!cells || (r->roi_is_hevc && !ctus)) {
+        ret = AVERROR(ENOMEM);
+        goto done;
+    }
+
+    /* fill the maps, cells are claimed by the first (earliest) region */
+    for (int i = 0; i < n; i++) {
+        const RKMPPRoiRegion *rg = &regions[i];
+        int x0 = rg->x / 16, y0 = rg->y / 16;
+        int x1 = (rg->x + rg->w - 1) / 16, y1 = (rg->y + rg->h - 1) / 16;
+
+        for (int y = y0; y <= y1 && y < cell_h; y++) {
+            for (int x = x0; x <= x1 && x < cell_w; x++) {
+                RKMPPRoiCell *cell = &cells[y * cell_w + x];
+                if (cell->written)
+                    continue;
+                cell->written      = 1;
+                cell->qp_adj       = av_clip(base_qp + rg->qp_adj, 0, 51);
+                cell->qp_mode      = 1;
+                cell->force_intra  = 0;
+            }
+        }
+
+        if (r->roi_is_hevc) {
+            int tx0 = rg->x / 64, ty0 = rg->y / 64;
+            int tx1 = (rg->x + rg->w - 1) / 64, ty1 = (rg->y + rg->h - 1) / 64;
+
+            for (int y = ty0; y <= ty1 && y < r->roi_ctu_h; y++)
+                for (int x = tx0; x <= tx1 && x < r->roi_ctu_w; x++)
+                    ctus[y * r->roi_ctu_w + x] = 1;
+        }
+    }
+
+    if (r->roi_is_hevc)
+        rkmpp_gen_roi_type2_hevc(r, base, qp, cells, ctus);
+    else
+        rkmpp_gen_roi_type2_h264(r, base, qp, cells);
+
+    mpp_buffer_sync_ro_end(mpp_enc_frame->mpp_roi_base_buf);
+    mpp_buffer_sync_ro_end(mpp_enc_frame->mpp_roi_qp_buf);
+
+    memset(&mpp_enc_frame->mpp_roi_cfg2, 0, sizeof(mpp_enc_frame->mpp_roi_cfg2));
+    mpp_enc_frame->mpp_roi_cfg2.base_cfg_buf = mpp_enc_frame->mpp_roi_base_buf;
+    mpp_enc_frame->mpp_roi_cfg2.qp_cfg_buf   = mpp_enc_frame->mpp_roi_qp_buf;
+    mpp_enc_frame->mpp_roi_cfg2.roi_qp_en    = 1;
+
+    {
+        MppMeta mpp_meta = mpp_frame_get_meta(mpp_enc_frame->mpp_frame);
+        if (!mpp_meta) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to get frame meta\n");
+            ret = AVERROR_EXTERNAL;
+            goto done;
+        }
+        if ((ret = mpp_meta_set_ptr(mpp_meta, KEY_ROI_DATA2,
+                                    &mpp_enc_frame->mpp_roi_cfg2)) != MPP_OK) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to set the ROI data2 ptr: %d\n", ret);
+            ret = AVERROR_EXTERNAL;
+            goto done;
+        }
+    }
+
+done:
+    av_freep(&cells);
+    av_freep(&ctus);
+    return ret;
+}
+
+static int rkmpp_prepare_roi_data(AVCodecContext *avctx, MPPEncFrame *mpp_enc_frame)
+{
+    RKMPPEncContext *r = avctx->priv_data;
+    AVFrameSideData *sd = NULL;
+    const AVRegionOfInterest *roi = NULL;
+    MppEncROIRegion *regions = NULL;
+    MppMeta mpp_meta = NULL;
+    uint32_t self_size = 0;
+    int i, nb_regions, n = 0;
+    int ret;
+
+    if (!mpp_enc_frame ||
+        !mpp_enc_frame->frame ||
+        !mpp_enc_frame->mpp_frame)
+        return AVERROR(EINVAL);
+
+    sd = av_frame_get_side_data(mpp_enc_frame->frame,
+                                AV_FRAME_DATA_REGIONS_OF_INTEREST);
+    if (!sd)
+        return 0;
+
+    if (sd->size < sizeof(uint32_t))
+        return AVERROR_INVALIDDATA;
+
+    self_size = ((const AVRegionOfInterest *)sd->data)->self_size;
+    if (!self_size || sd->size % self_size) {
+        av_log(avctx, AV_LOG_WARNING, "Invalid Regions Of Interest side data, skipping\n");
+        return 0;
+    }
+
+    /* vepu580 (rk3588) only consumes the TYPE_2 format */
+    if (r->roi_data_mode)
+        return rkmpp_prepare_roi_data_type2(avctx, mpp_enc_frame, sd->data, sd->size);
+
+    nb_regions = sd->size / self_size;
+    if (nb_regions > RKMPP_MAX_ROI_REGIONS) {
+        av_log(avctx, AV_LOG_WARNING,
+               "Too many ROI regions (%d), keeping the first %d\n",
+               nb_regions, RKMPP_MAX_ROI_REGIONS);
+        nb_regions = RKMPP_MAX_ROI_REGIONS;
+    }
+
+    regions = av_calloc(nb_regions, sizeof(*regions));
+    if (!regions)
+        return AVERROR(ENOMEM);
+
+    /* When regions overlap the first one applies, so iterate in reverse */
+    for (i = nb_regions - 1; i >= 0; i--) {
+        roi = (const AVRegionOfInterest *)(sd->data + (size_t)i * self_size);
+
+        regions[n].x = av_clip(roi->left, 0, avctx->width);
+        regions[n].y = av_clip(roi->top,  0, avctx->height);
+        regions[n].w = av_clip(roi->right  - roi->left, 0, avctx->width  - regions[n].x);
+        regions[n].h = av_clip(roi->bottom - roi->top,  0, avctx->height - regions[n].y);
+        if (!regions[n].w || !regions[n].h)
+            continue;
+
+        regions[n].intra       = 0;
+        regions[n].abs_qp_en   = 0; /* relative qp */
+        regions[n].area_map_en = 1;
+        regions[n].qp_area_idx = 0;
+        regions[n].quality     = roi->qoffset.den ?
+            av_clip(llrint(av_q2d(roi->qoffset) * 51), -51, 51) : 0;
+
+        n++;
+    }
+
+    if (!n) {
+        av_freep(&regions);
+        return 0;
+    }
+
+    mpp_enc_frame->mpp_roi_regions  = regions;
+    mpp_enc_frame->mpp_roi_cfg.number  = n;
+    mpp_enc_frame->mpp_roi_cfg.regions = regions;
+
+    mpp_meta = mpp_frame_get_meta(mpp_enc_frame->mpp_frame);
+    if (!mpp_meta) {
+        av_log(avctx, AV_LOG_ERROR, "Failed to get frame meta\n");
+        return AVERROR_EXTERNAL;
+    }
+    if ((ret = mpp_meta_set_ptr(mpp_meta, KEY_ROI_DATA,
+                                &mpp_enc_frame->mpp_roi_cfg)) != MPP_OK) {
+        av_log(avctx, AV_LOG_ERROR, "Failed to set the ROI data ptr: %d\n", ret);
+        return AVERROR_EXTERNAL;
+    }
+
+    return 0;
+}
+
 static MPPEncFrame *rkmpp_submit_frame(AVCodecContext *avctx, AVFrame *frame)
 {
     RKMPPEncContext *r = avctx->priv_data;
@@ -892,6 +1376,14 @@ static MPPEncFrame *rkmpp_submit_frame(AVCodecContext *avctx, AVFrame *frame)
         (avctx->codec_id == AV_CODEC_ID_H264 ||
          avctx->codec_id == AV_CODEC_ID_HEVC)) {
         ret = rkmpp_prepare_udu_sei_data(avctx, mpp_enc_frame);
+        if (ret < 0)
+            goto exit;
+    }
+
+    if (r->roi &&
+        (avctx->codec_id == AV_CODEC_ID_H264 ||
+         avctx->codec_id == AV_CODEC_ID_HEVC)) {
+        ret = rkmpp_prepare_roi_data(avctx, mpp_enc_frame);
         if (ret < 0)
             goto exit;
     }
@@ -1098,6 +1590,11 @@ static av_cold int rkmpp_encode_close(AVCodecContext *avctx)
 
     clear_frame_list(&r->frame_list);
 
+    if (r->roi_buf_grp) {
+        mpp_buffer_group_put(r->roi_buf_grp);
+        r->roi_buf_grp = NULL;
+    }
+
     if (r->hwframe)
         av_buffer_unref(&r->hwframe);
     if (r->hwdevice)
@@ -1215,6 +1712,42 @@ static av_cold int rkmpp_encode_init(AVCodecContext *avctx)
         r->async_frames = H26X_ASYNC_FRAMES;
     else if (avctx->codec_id == AV_CODEC_ID_MJPEG)
         r->async_frames = MJPEG_ASYNC_FRAMES;
+
+    /*
+     * ROI data format auto-selection:
+     * the vepu580 encoder cores (rk3588) only consume KEY_ROI_DATA2,
+     * other cores (vepu54x/51x) consume the legacy KEY_ROI_DATA.
+     */
+    if (r->roi &&
+        (avctx->codec_id == AV_CODEC_ID_H264 ||
+         avctx->codec_id == AV_CODEC_ID_HEVC)) {
+        char soc_name[128] = { 0 };
+
+        rkmpp_enc_read_soc_name(avctx, soc_name, sizeof(soc_name));
+        if (strstr(soc_name, "rk3588")) {
+            r->roi_data_mode = 1;
+            r->roi_is_hevc   = (avctx->codec_id == AV_CODEC_ID_HEVC);
+
+            if (r->roi_is_hevc) {
+                r->roi_ctu_w = FFALIGN(avctx->width,  64) / 64;
+                r->roi_ctu_h = FFALIGN(avctx->height, 64) / 64;
+                r->roi_base_size = (size_t)r->roi_ctu_w * r->roi_ctu_h * 64;
+                r->roi_qp_size   = (size_t)r->roi_ctu_w * r->roi_ctu_h * 256;
+            } else {
+                int mb16_w = FFALIGN(avctx->width,  16) / 16;
+                int mb16_h = FFALIGN(avctx->height, 16) / 16;
+
+                r->roi_mb_w     = FFALIGN(avctx->width,  64) / 16;
+                r->roi_mb_h     = FFALIGN(avctx->height, 64) / 16;
+                r->roi_stride_h = FFALIGN(mb16_w, 4);
+                r->roi_stride_v = FFALIGN(mb16_h, 4);
+                r->roi_base_size = (size_t)r->roi_mb_w * r->roi_mb_h * 8;
+                r->roi_qp_size   = (size_t)r->roi_mb_w * r->roi_mb_h * 2;
+            }
+            av_log(avctx, AV_LOG_VERBOSE,
+                   "ROI TYPE_2 (KEY_ROI_DATA2) selected for vepu580 cores\n");
+        }
+    }
 
     if ((avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) &&
         (avctx->codec_id == AV_CODEC_ID_H264 ||
