@@ -30,6 +30,11 @@
 
 #include "rkmppdec.h"
 
+#include "libavutil/hdr_dynamic_metadata.h"
+#if CONFIG_HEVC_SEI
+#include "dynamic_hdr_vivid.h"
+#endif
+
 #include <fcntl.h>
 #include <unistd.h>
 #if CONFIG_RKRGA
@@ -559,6 +564,59 @@ static int rkmpp_export_content_light(AVFrame *frame,
     return 0;
 }
 
+static int rkmpp_export_dynamic_hdr(AVCodecContext *avctx, AVFrame *frame,
+                                    MppFrame mpp_frame)
+{
+    MppFrameHdrDynamicMeta *meta = mpp_frame_get_hdr_dynamic_meta(mpp_frame);
+    int ret;
+
+    if (!meta || !meta->size)
+        return 0;
+
+    switch (meta->hdr_fmt) {
+    case HDR10PLUS: {
+        AVDynamicHDRPlus *hdrplus = av_dynamic_hdr_plus_create_side_data(frame);
+        if (!hdrplus)
+            return AVERROR(ENOMEM);
+
+        /* The MPP payload starts from the application mode byte, which is
+         * exactly what the T.35 parser expects */
+        ret = av_dynamic_hdr_plus_from_t35(hdrplus, meta->data, meta->size);
+        if (ret < 0) {
+            av_log(avctx, AV_LOG_DEBUG, "Failed to parse HDR10+ metadata: %d\n", ret);
+            av_frame_remove_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS);
+        }
+        break;
+    }
+#if CONFIG_HEVC_SEI
+    case HDRVIVID: {
+        AVDynamicHDRVivid *vivid = av_dynamic_hdr_vivid_create_side_data(frame);
+        if (!vivid)
+            return AVERROR(ENOMEM);
+
+        /* The MPP payload starts from the CUVA system start code */
+        ret = ff_parse_itu_t_t35_to_dynamic_hdr_vivid(vivid, meta->data, meta->size);
+        if (ret < 0) {
+            av_log(avctx, AV_LOG_DEBUG, "Failed to parse HDR Vivid metadata: %d\n", ret);
+            av_frame_remove_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_VIVID);
+        }
+        break;
+    }
+#endif
+    case HDR10:
+    case HLG:
+        /* static only, nothing to export here */
+        break;
+    case DLBY:
+    default:
+        av_log(avctx, AV_LOG_VERBOSE, "Unsupported dynamic HDR format: %u\n",
+               (unsigned)meta->hdr_fmt);
+        break;
+    }
+
+    return 0;
+}
+
 static void rkmpp_free_mpp_frame(void *opaque, uint8_t *data)
 {
     MppFrame mpp_frame = (MppFrame)opaque;
@@ -686,13 +744,21 @@ static int rkmpp_export_frame(AVCodecContext *avctx, AVFrame *frame, MppFrame mp
                                               (AVRational) { frame->width, frame->height });
     }
 
-    if (avctx->codec_id == AV_CODEC_ID_HEVC &&
+    if ((avctx->codec_id == AV_CODEC_ID_HEVC ||
+         avctx->codec_id == AV_CODEC_ID_AV1) &&
         (frame->color_trc == AVCOL_TRC_SMPTE2084 ||
          frame->color_trc == AVCOL_TRC_ARIB_STD_B67)) {
         ret = rkmpp_export_mastering_display(avctx, frame, mpp_frame_get_mastering_display(mpp_frame));
         if (ret < 0)
             return ret;
         ret = rkmpp_export_content_light(frame, mpp_frame_get_content_light(mpp_frame));
+        if (ret < 0)
+            return ret;
+    }
+
+    if (avctx->codec_id == AV_CODEC_ID_HEVC ||
+        avctx->codec_id == AV_CODEC_ID_AV1) {
+        ret = rkmpp_export_dynamic_hdr(avctx, frame, mpp_frame);
         if (ret < 0)
             return ret;
     }
