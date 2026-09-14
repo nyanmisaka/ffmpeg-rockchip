@@ -254,6 +254,14 @@ static int nv15_20ToPlanarWrapper(SwsContext *c, const uint8_t *src[],
             *tdstY++ = (((tsrcY[4] & 0xFF) << 2) | ((tsrcY[3] >> 6) & 0x3 )) << shift[0];
             tsrcY += 5;
         }
+        const int y_rem = c->srcW & 3;
+        if (y_rem) {
+            *tdstY++ = (((tsrcY[1] & 0x3) << 8) | (tsrcY[0] & 0xFF)) << shift[0];
+            if (y_rem > 1)
+                *tdstY++ = (((tsrcY[2] & 0xF ) << 6) | ((tsrcY[1] >> 2) & 0x3F)) << shift[0];
+            if (y_rem > 2)
+                *tdstY++ = (((tsrcY[3] & 0x3F) << 4) | ((tsrcY[2] >> 4) & 0xF )) << shift[0];
+        }
         src[0] += srcStride[0];
         dstY += dstStride[0] / sizeof(uint16_t);
     }
@@ -267,6 +275,10 @@ static int nv15_20ToPlanarWrapper(SwsContext *c, const uint8_t *src[],
             *tdstU++ = (((tsrcUV[3] & 0x3F) << 4) | ((tsrcUV[2] >> 4) & 0xF )) << shift[1];
             *tdstV++ = (((tsrcUV[4] & 0xFF) << 2) | ((tsrcUV[3] >> 6) & 0x3 )) << shift[2];
             tsrcUV += 5;
+        }
+        if (c->chrSrcW & 1) {
+            *tdstU++ = (((tsrcUV[1] & 0x3) << 8) | (tsrcUV[0]        & 0xFF)) << shift[1];
+            *tdstV++ = (((tsrcUV[2] & 0xF) << 6) | ((tsrcUV[1] >> 2) & 0x3F)) << shift[2];
         }
         src[1] += srcStride[1];
         dstU += dstStride[1] / sizeof(uint16_t);
