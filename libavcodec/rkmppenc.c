@@ -27,6 +27,28 @@
 #include "config_components.h"
 #include "rkmppenc.h"
 
+static enum AVColorSpace rkmpp_normalize_colorspace(enum AVColorSpace value)
+{
+    return value == AVCOL_SPC_UNSPECIFIED ||
+           value == AVCOL_SPC_RESERVED ||
+           (unsigned)value >= AVCOL_SPC_NB ? AVCOL_SPC_BT709 : value;
+}
+
+static enum AVColorPrimaries rkmpp_normalize_color_primaries(enum AVColorPrimaries value)
+{
+    return value == AVCOL_PRI_UNSPECIFIED ||
+           value == AVCOL_PRI_RESERVED ||
+           (unsigned)value >= AVCOL_PRI_NB ? AVCOL_PRI_BT709 : value;
+}
+
+static enum AVColorTransferCharacteristic rkmpp_normalize_color_trc(
+    enum AVColorTransferCharacteristic value)
+{
+    return value == AVCOL_TRC_UNSPECIFIED ||
+           value == AVCOL_TRC_RESERVED ||
+           (unsigned)value >= AVCOL_TRC_NB ? AVCOL_TRC_BT709 : value;
+}
+
 static MppCodingType rkmpp_get_coding_type(AVCodecContext *avctx)
 {
     switch (avctx->codec_id) {
@@ -296,6 +318,9 @@ static int rkmpp_set_enc_cfg_prep(AVCodecContext *avctx, AVFrame *frame)
     MppFrameFormat mpp_fmt = r->mpp_fmt;
     int ret, is_afbc = 0;
     int hor_stride = 0, ver_stride = 0;
+    enum AVColorSpace colorspace = rkmpp_normalize_colorspace(avctx->colorspace);
+    enum AVColorPrimaries color_primaries = rkmpp_normalize_color_primaries(avctx->color_primaries);
+    enum AVColorTransferCharacteristic color_trc = rkmpp_normalize_color_trc(avctx->color_trc);
     const AVPixFmtDescriptor *pix_desc;
     const AVDRMFrameDescriptor *drm_desc;
 
@@ -344,10 +369,10 @@ static int rkmpp_set_enc_cfg_prep(AVCodecContext *avctx, AVFrame *frame)
     if (pix_desc->flags & AV_PIX_FMT_FLAG_RGB) /* RGB -> BT709 CSC */
         mpp_enc_cfg_set_s32(cfg, "prep:colorspace", AVCOL_SPC_BT709);
     else
-        mpp_enc_cfg_set_s32(cfg, "prep:colorspace", avctx->colorspace);
+        mpp_enc_cfg_set_s32(cfg, "prep:colorspace", colorspace);
 
-    mpp_enc_cfg_set_s32(cfg, "prep:colorprim", avctx->color_primaries);
-    mpp_enc_cfg_set_s32(cfg, "prep:colortrc", avctx->color_trc);
+    mpp_enc_cfg_set_s32(cfg, "prep:colorprim", color_primaries);
+    mpp_enc_cfg_set_s32(cfg, "prep:colortrc", color_trc);
 
     mpp_enc_cfg_set_s32(cfg, "prep:colorrange", avctx->color_range);
     if (r->pix_fmt == AV_PIX_FMT_YUVJ420P ||
@@ -401,6 +426,9 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
     int64_t min_bps = FFMIN(avctx->rc_min_rate, INT_MAX);
     int qp_init, qp_max, qp_min, qp_max_i, qp_min_i;
     int ret;
+    enum AVColorSpace colorspace = rkmpp_normalize_colorspace(avctx->colorspace);
+    enum AVColorPrimaries color_primaries = rkmpp_normalize_color_primaries(avctx->color_primaries);
+    enum AVColorTransferCharacteristic color_trc = rkmpp_normalize_color_trc(avctx->color_trc);
 
     mpp_enc_cfg_set_s32(cfg, "prep:width", avctx->width);
     mpp_enc_cfg_set_s32(cfg, "prep:height", avctx->height);
@@ -415,10 +443,10 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
     if (pix_desc->flags & AV_PIX_FMT_FLAG_RGB) /* RGB -> BT709 CSC */
         mpp_enc_cfg_set_s32(cfg, "prep:colorspace", AVCOL_SPC_BT709);
     else
-        mpp_enc_cfg_set_s32(cfg, "prep:colorspace", avctx->colorspace);
+        mpp_enc_cfg_set_s32(cfg, "prep:colorspace", colorspace);
 
-    mpp_enc_cfg_set_s32(cfg, "prep:colorprim", avctx->color_primaries);
-    mpp_enc_cfg_set_s32(cfg, "prep:colortrc", avctx->color_trc);
+    mpp_enc_cfg_set_s32(cfg, "prep:colorprim", color_primaries);
+    mpp_enc_cfg_set_s32(cfg, "prep:colortrc", color_trc);
 
     mpp_enc_cfg_set_s32(cfg, "prep:colorrange", avctx->color_range);
     if (r->pix_fmt == AV_PIX_FMT_YUVJ420P ||
@@ -805,9 +833,9 @@ static MPPEncFrame *rkmpp_submit_frame(AVCodecContext *avctx, AVFrame *frame)
     mpp_frame_set_width(mpp_frame, drm_frame->width);
     mpp_frame_set_height(mpp_frame, drm_frame->height);
 
-    mpp_frame_set_colorspace(mpp_frame, avctx->colorspace);
-    mpp_frame_set_color_primaries(mpp_frame, avctx->color_primaries);
-    mpp_frame_set_color_trc(mpp_frame, avctx->color_trc);
+    mpp_frame_set_colorspace(mpp_frame, rkmpp_normalize_colorspace(avctx->colorspace));
+    mpp_frame_set_color_primaries(mpp_frame, rkmpp_normalize_color_primaries(avctx->color_primaries));
+    mpp_frame_set_color_trc(mpp_frame, rkmpp_normalize_color_trc(avctx->color_trc));
 
     mpp_frame_set_color_range(mpp_frame, avctx->color_range);
     if (r->pix_fmt == AV_PIX_FMT_YUVJ420P ||

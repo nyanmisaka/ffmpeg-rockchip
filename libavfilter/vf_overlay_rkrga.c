@@ -30,6 +30,7 @@
 #include "libavutil/pixdesc.h"
 
 #include "filters.h"
+#include "formats.h"
 #include "framesync.h"
 
 #include "rkrga_common.h"
@@ -309,6 +310,50 @@ eof:
     return 0;
 }
 
+static int rgaoverlay_query_formats(const AVFilterContext *ctx,
+                                    AVFilterFormatsConfig **cfg_in,
+                                    AVFilterFormatsConfig **cfg_out)
+{
+    AVFilterFormats *formats;
+    int ret;
+
+    /* All RGA links carry hardware frames, but their software pixel/color
+     * properties do not have to match.  In particular, an RGB overlay is
+     * commonly composited onto a limited-range YUV main input. */
+    formats = ff_make_formats_list_singleton(AV_PIX_FMT_DRM_PRIME);
+    if ((ret = ff_formats_ref(formats, &cfg_in[0]->formats)) < 0 ||
+        (ret = ff_formats_ref(formats, &cfg_in[1]->formats)) < 0 ||
+        (ret = ff_formats_ref(formats, &cfg_out[0]->formats)) < 0)
+        return ret;
+
+    /* The output inherits the main input properties. */
+    formats = ff_all_color_spaces();
+    if ((ret = ff_formats_ref(formats, &cfg_in[0]->color_spaces)) < 0 ||
+        (ret = ff_formats_ref(formats, &cfg_out[0]->color_spaces)) < 0)
+        return ret;
+
+    formats = ff_all_color_ranges();
+    if ((ret = ff_formats_ref(formats, &cfg_in[0]->color_ranges)) < 0 ||
+        (ret = ff_formats_ref(formats, &cfg_out[0]->color_ranges)) < 0)
+        return ret;
+
+    formats = ff_all_alpha_modes();
+    if ((ret = ff_formats_ref(formats, &cfg_in[0]->alpha_modes)) < 0 ||
+        (ret = ff_formats_ref(formats, &cfg_out[0]->alpha_modes)) < 0)
+        return ret;
+
+    /* Overlay properties are independent and are converted by RGA. */
+    if ((ret = ff_formats_ref(ff_all_color_spaces(),
+                              &cfg_in[1]->color_spaces)) < 0 ||
+        (ret = ff_formats_ref(ff_all_color_ranges(),
+                              &cfg_in[1]->color_ranges)) < 0 ||
+        (ret = ff_formats_ref(ff_all_alpha_modes(),
+                              &cfg_in[1]->alpha_modes)) < 0)
+        return ret;
+
+    return 0;
+}
+
 #define OFFSET(x) offsetof(RGAOverlayContext, x)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 
@@ -371,7 +416,7 @@ const FFFilter ff_vf_overlay_rkrga = {
     .activate       = rgaoverlay_activate,
     FILTER_INPUTS(rgaoverlay_inputs),
     FILTER_OUTPUTS(rgaoverlay_outputs),
-    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_DRM_PRIME),
+    FILTER_QUERY_FUNC2(rgaoverlay_query_formats),
     .preinit        = rgaoverlay_framesync_preinit,
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 };
