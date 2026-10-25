@@ -80,11 +80,6 @@ static const int desired_video_buffers = 256;
  */
 #define V4L_TS_CONVERT_READY V4L_TS_DEFAULT
 
-struct buf_data {
-    void *start;
-    unsigned int len;
-};
-
 struct video_data {
     AVClass *class;
     int fd;
@@ -102,7 +97,8 @@ struct video_data {
 
     int buffers;
     atomic_int buffers_queued;
-    struct buf_data *buf_data;
+    void **buf_start;
+    unsigned int *buf_len;
     char *standard;
     v4l2_std_id std_id;
     int channel;
@@ -363,9 +359,10 @@ static void list_standards(AVFormatContext *ctx)
 static void mmap_free(struct video_data *s, int n)
 {
     while (--n > 0) {
-        v4l2_munmap(s->buf_data[n].start, s->buf_data[n].len);
+        v4l2_munmap(s->buf_start[n], s->buf_len[n]);
     }
-    av_freep(&s->buf_data);
+    av_freep(&s->buf_start);
+    av_freep(&s->buf_len);
 }
 
 static int mmap_init(AVFormatContext *ctx)
@@ -389,9 +386,15 @@ static int mmap_init(AVFormatContext *ctx)
         return AVERROR(ENOMEM);
     }
     s->buffers = req.count;
-    s->buf_data = av_malloc_array(s->buffers, sizeof(struct buf_data));
-    if (!s->buf_data) {
-        av_log(ctx, AV_LOG_ERROR, "Cannot allocate buffer data\n");
+    s->buf_start = av_malloc_array(s->buffers, sizeof(void *));
+    if (!s->buf_start) {
+        av_log(ctx, AV_LOG_ERROR, "Cannot allocate buffer pointers\n");
+        return AVERROR(ENOMEM);
+    }
+    s->buf_len = av_malloc_array(s->buffers, sizeof(unsigned int));
+    if (!s->buf_len) {
+        av_log(ctx, AV_LOG_ERROR, "Cannot allocate buffer sizes\n");
+        av_freep(&s->buf_start);
         return AVERROR(ENOMEM);
     }
 
@@ -424,19 +427,19 @@ static int mmap_init(AVFormatContext *ctx)
             buf_offset = buf.m.offset;
         }
 
-        s->buf_data[i].len = buf_length;
-        if (s->frame_size > 0 && s->buf_data[i].len < s->frame_size) {
+        s->buf_len[i] = buf_length;
+        if (s->frame_size > 0 && s->buf_len[i] < s->frame_size) {
             av_log(ctx, AV_LOG_ERROR,
-                   "buf_data[%d].len = %d < expected frame size %d\n",
-                   i, buf_length, s->frame_size);
+                   "buf_len[%d] = %d < expected frame size %d\n",
+                   i, s->buf_len[i], s->frame_size);
             res = AVERROR(ENOMEM);
             goto fail;
         }
-        s->buf_data[i].start = v4l2_mmap(NULL, buf_length,
-                                         PROT_READ | PROT_WRITE, MAP_SHARED,
-                                         s->fd, buf_offset);
+        s->buf_start[i] = v4l2_mmap(NULL, buf_length,
+                               PROT_READ | PROT_WRITE, MAP_SHARED,
+                               s->fd, buf_offset);
 
-        if (s->buf_data[i].start == MAP_FAILED) {
+        if (s->buf_start[i] == MAP_FAILED) {
             res = AVERROR(errno);
             av_log(ctx, AV_LOG_ERROR, "mmap: %s\n", av_err2str(res));
             goto fail;
@@ -604,7 +607,7 @@ static int mmap_read_frame(AVFormatContext *ctx, AVPacket *pkt)
         }
     }
 
-    /* Image is at s->buf_data[buf.index].start */
+    /* Image is at s->buff_start[buf.index] */
     if (atomic_load(&s->buffers_queued) == FFMAX(s->buffers / 8, 1)) {
         /* when we start getting low on queued buffers, fall back on copying data */
         res = av_new_packet(pkt, bytesused);
@@ -613,7 +616,7 @@ static int mmap_read_frame(AVFormatContext *ctx, AVPacket *pkt)
             enqueue_buffer(s, &buf);
             return res;
         }
-        memcpy(pkt->data, s->buf_data[buf.index].start, bytesused);
+        memcpy(pkt->data, s->buf_start[buf.index], bytesused);
 
         res = enqueue_buffer(s, &buf);
         if (res) {
@@ -623,7 +626,7 @@ static int mmap_read_frame(AVFormatContext *ctx, AVPacket *pkt)
     } else {
         struct buff_data *buf_descriptor;
 
-        pkt->data     = s->buf_data[buf.index].start;
+        pkt->data     = s->buf_start[buf.index];
         pkt->size     = bytesused;
 
         buf_descriptor = av_malloc(sizeof(struct buff_data));
