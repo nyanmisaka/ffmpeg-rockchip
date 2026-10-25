@@ -41,6 +41,7 @@ enum AVHWDeviceType {
     AV_HWDEVICE_TYPE_AMF,
     /* OpenHarmony Codec device */
     AV_HWDEVICE_TYPE_OHCODEC,
+    AV_HWDEVICE_TYPE_RKMPP,
 };
 
 /**
