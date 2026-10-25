@@ -836,8 +836,14 @@ static av_cold int verify_rga_frame_info(AVFilterContext *avctx,
     if (!src || !dst)
         return AVERROR(EINVAL);
 
-    scale_ratio_w = (float)dst->act_w / (float)src->act_w;
-    scale_ratio_h = (float)dst->act_h / (float)src->act_h;
+    if ((src->rotate_mode & 0x04) == 0x04 /* HAL_TRANSFORM_ROT_90 */ ||
+        (src->rotate_mode & 0x07) == 0x07 /* HAL_TRANSFORM_ROT_270 */) {
+        scale_ratio_w = (float)dst->act_h / (float)src->act_w;
+        scale_ratio_h = (float)dst->act_w / (float)src->act_h;
+    } else {
+        scale_ratio_w = (float)dst->act_w / (float)src->act_w;
+        scale_ratio_h = (float)dst->act_h / (float)src->act_h;
+    }
 
     /* P010 requires RGA3 */
     if (!r->has_rga3 &&
