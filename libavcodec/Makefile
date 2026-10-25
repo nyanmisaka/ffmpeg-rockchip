@@ -427,6 +427,7 @@ OBJS-$(CONFIG_H264_OMX_ENCODER)        += omx.o
 OBJS-$(CONFIG_H264_QSV_DECODER)        += qsvdec.o
 OBJS-$(CONFIG_H264_QSV_ENCODER)        += qsvenc_h264.o
 OBJS-$(CONFIG_H264_RKMPP_DECODER)      += rkmppdec.o
+OBJS-$(CONFIG_H264_RKMPP_ENCODER)      += rkmppenc.o
 OBJS-$(CONFIG_H264_VAAPI_ENCODER)      += vaapi_encode_h264.o h264_levels.o \
                                           h2645data.o hw_base_encode_h264.o
 OBJS-$(CONFIG_H264_VULKAN_ENCODER)     += vulkan_encode.o vulkan_encode_h264.o \
@@ -453,6 +454,7 @@ OBJS-$(CONFIG_HEVC_NVENC_ENCODER)      += nvenc_hevc.o nvenc.o
 OBJS-$(CONFIG_HEVC_QSV_DECODER)        += qsvdec.o
 OBJS-$(CONFIG_HEVC_QSV_ENCODER)        += qsvenc_hevc.o hevc/ps_enc.o
 OBJS-$(CONFIG_HEVC_RKMPP_DECODER)      += rkmppdec.o
+OBJS-$(CONFIG_HEVC_RKMPP_ENCODER)      += rkmppenc.o
 OBJS-$(CONFIG_HEVC_VAAPI_ENCODER)      += vaapi_encode_h265.o h265_profile_level.o \
                                           h2645data.o hw_base_encode_h265.o
 OBJS-$(CONFIG_HEVC_VULKAN_ENCODER)     += vulkan_encode.o vulkan_encode_h265.o \
@@ -517,6 +519,7 @@ OBJS-$(CONFIG_MJPEG_CUVID_DECODER)     += cuviddec.o
 OBJS-$(CONFIG_MJPEG_QSV_ENCODER)       += qsvenc_jpeg.o
 OBJS-$(CONFIG_MJPEG_VAAPI_ENCODER)     += vaapi_encode_mjpeg.o
 OBJS-$(CONFIG_MJPEG_RKMPP_DECODER)     += rkmppdec.o
+OBJS-$(CONFIG_MJPEG_RKMPP_ENCODER)     += rkmppenc.o
 OBJS-$(CONFIG_MLP_DECODER)             += mlpdec.o mlpdsp.o
 OBJS-$(CONFIG_MLP_ENCODER)             += mlpenc.o mlp.o
 OBJS-$(CONFIG_MMVIDEO_DECODER)         += mmvideo.o
