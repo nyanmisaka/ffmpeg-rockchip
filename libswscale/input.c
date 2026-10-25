@@ -946,6 +946,39 @@ static void nv21ToUV_c(uint8_t *dstU, uint8_t *dstV,
     nvXXtoUV_c(dstV, dstU, src1, width);
 }
 
+static av_always_inline void nv15_20ToYUV_c(uint16_t *dst, const uint8_t *src,
+                                            int dst_pos, int src_pos)
+{
+    int shift = (src_pos << 1) & 7;
+    src_pos = (src_pos * 10) >> 3;
+    AV_WN16(dst + dst_pos,
+            ((AV_RL16(src + src_pos) >> shift) |
+             (AV_RL16(src + src_pos + 1) << (8 - shift))) & 0x3FF);
+}
+
+static void nv15_20ToY_c(uint8_t *_dst, const uint8_t *_src, const uint8_t *unused1,
+                         const uint8_t *unused2, int width, uint32_t *unused, void *opq)
+{
+    int i;
+    const uint8_t *src = (const uint8_t *)_src;
+    uint16_t *dst      = (uint16_t *)_dst;
+    for (i = 0; i < width; i++)
+        nv15_20ToYUV_c(dst, src, i, i);
+}
+
+static void nv15_20ToUV_c(uint8_t *_dstU, uint8_t *_dstV,
+                          const uint8_t *unused0, const uint8_t *_src1, const uint8_t *_src2,
+                          int width, uint32_t *unused, void *opq)
+{
+    int i;
+    const uint8_t *src1 = (const uint8_t *)_src1;
+    uint16_t *dstU      = (uint16_t *)_dstU, *dstV = (uint16_t *)_dstV;
+    for (i = 0; i < width; i++) {
+        nv15_20ToYUV_c(dstU, src1, i, 2 * i);
+        nv15_20ToYUV_c(dstV, src1, i, 2 * i + 1);
+    }
+}
+
 #define p01x_uv_wrapper(fmt, shift) \
     static void fmt ## LEToUV ## _c(uint8_t *dstU,                       \
                                        uint8_t *dstV,                    \
@@ -2028,6 +2061,10 @@ av_cold void ff_sws_init_input_funcs(SwsInternal *c,
     case AV_PIX_FMT_XV48BE:
         *chrToYV12 = read_xv48be_UV_c;
         break;
+    case AV_PIX_FMT_NV15:
+    case AV_PIX_FMT_NV20:
+        *chrToYV12 = nv15_20ToUV_c;
+        break;
     case AV_PIX_FMT_NV20LE:
         *chrToYV12 = nv20LEToUV_c;
         break;
@@ -2615,6 +2652,10 @@ av_cold void ff_sws_init_input_funcs(SwsInternal *c,
         break;
     case AV_PIX_FMT_BGRA64LE:
         *lumToYV12 = bgr64LEToY_c;
+        break;
+    case AV_PIX_FMT_NV15:
+    case AV_PIX_FMT_NV20:
+        *lumToYV12 = nv15_20ToY_c;
         break;
     case AV_PIX_FMT_NV20LE:
         *lumToYV12 = nv20LEToY_c;
