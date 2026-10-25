@@ -984,7 +984,7 @@ static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet, int timeout
             av_log(avctx, AV_LOG_ERROR, "ff_get_encode_buffer failed: %d\n", ret);
             goto exit;
         }
-        memcpy(packet->data, mpp_packet_get_data(mpp_pkt), mpp_pkt_length);
+        memcpy(packet->data, mpp_packet_get_pos(mpp_pkt), mpp_pkt_length);
     }
 
     packet->time_base.num = avctx->time_base.num;
