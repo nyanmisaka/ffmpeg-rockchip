@@ -248,12 +248,14 @@ static void clear_frame_list(MPPEncFrame **list)
         mpp_frame = frame->mpp_frame;
         if (mpp_frame) {
             mpp_buf = mpp_frame_get_buffer(mpp_frame);
-            if (mpp_buf &&
-                mpp_buffer_get_index(mpp_buf) >= 0)
-                mpp_buffer_put(mpp_buf);
-
-            mpp_frame_deinit(&frame->mpp_frame);
-            frame->mpp_frame = NULL;
+            if (mpp_buf) {
+                if (mpp_buffer_get_index(mpp_buf) >= 0)
+                    mpp_buffer_put(mpp_buf);
+                mpp_frame_deinit(&frame->mpp_frame);
+                frame->mpp_frame = NULL;
+            }
+            /* bufferless frames (EOS markers) stay owned by MPP queues:
+               deinitializing them here would double-put into the pool */
         }
 
         av_freep(&frame->mpp_sei_set.datas);
