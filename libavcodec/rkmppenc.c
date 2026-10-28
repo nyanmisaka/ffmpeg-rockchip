@@ -972,7 +972,25 @@ static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet, int timeout
         return AVERROR(ENOMEM);
 
     if (mpp_packet_get_eos(mpp_pkt)) {
+        MPPEncFrame *p;
+
         av_log(avctx, AV_LOG_DEBUG, "Received an EOS packet\n");
+        /* release our EOS frame: MPP removed it from mFrmIn when the
+           task was processed, packet meta does not hold ownership */
+        for (p = r->frame_list; p; p = p->next) {
+            if (p->queued && p->mpp_frame &&
+                !mpp_frame_get_buffer(p->mpp_frame)) {
+                mpp_frame_deinit(&p->mpp_frame);
+                p->mpp_frame = NULL;
+
+                av_freep(&p->mpp_sei_set.datas);
+                p->mpp_sei_set.count = 0;
+
+                av_frame_free(&p->frame);
+                p->queued = 0;
+                break;
+            }
+        }
         ret = AVERROR_EOF;
         goto exit;
     }
@@ -1052,10 +1070,32 @@ static int rkmpp_encode_frame(AVCodecContext *avctx, AVPacket *packet,
     if (get_used_frame_count(r->frame_list) > r->async_frames)
         goto get;
 
-    mpp_enc_frame = rkmpp_submit_frame(avctx, (AVFrame *)frame);
-    if (!mpp_enc_frame) {
-        av_log(avctx, AV_LOG_ERROR, "Failed to submit frame on input\n");
-        return AVERROR(ENOMEM);
+    if (frame) {
+        mpp_enc_frame = rkmpp_submit_frame(avctx, (AVFrame *)frame);
+        if (!mpp_enc_frame) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to submit frame on input\n");
+            return AVERROR(ENOMEM);
+        }
+    } else {
+        /* submit EOS only once per flush: repeated send(NULL) calls
+           must not create new EOS frames */
+        MPPEncFrame *p;
+        int have_eos = 0;
+
+        for (p = r->frame_list; p; p = p->next) {
+            if (p->queued && p->mpp_frame &&
+                !mpp_frame_get_buffer(p->mpp_frame)) {
+                have_eos = 1;
+                break;
+            }
+        }
+        if (have_eos)
+            goto get;
+        mpp_enc_frame = rkmpp_submit_frame(avctx, NULL);
+        if (!mpp_enc_frame) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to submit EOS frame\n");
+            return AVERROR(ENOMEM);
+        }
     }
 
 send:
@@ -1067,8 +1107,13 @@ send:
 
 get:
     ret = rkmpp_get_packet(avctx, packet, timeout);
-    if (!frame && ret == AVERROR(EAGAIN))
-        goto send;
+    if (!frame && ret == AVERROR(EAGAIN)) {
+        /* the EOS frame is already queued in MPP: re-putting it would
+           add a duplicate to the internal frame list; return and let
+           the flush loop poll again */
+        *got_packet = 0;
+        return 0;
+    }
     if (ret == AVERROR_EOF ||
         ret == AVERROR(EAGAIN))
         *got_packet = 0;
