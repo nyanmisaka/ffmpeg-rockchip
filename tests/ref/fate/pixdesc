@@ -283,3 +283,5 @@ Testing pixel format descriptors
   pix fmt cuarray avg_bpp:0 planes:0
   pix fmt xyzp12le avg_bpp:48 planes:3
   pix fmt xyzp12be avg_bpp:48 planes:3
+  pix fmt nv15 avg_bpp:15 planes:2
+  pix fmt nv20 avg_bpp:20 planes:2
